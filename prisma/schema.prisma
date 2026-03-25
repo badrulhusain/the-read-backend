@@ -1,0 +1,105 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  
+}
+
+enum Role {
+  ADMIN
+  AUTHOR
+  READER
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model User {
+  id          String    @id @default(uuid())
+  name        String?
+  email       String    @unique
+  password    String
+  role        Role      @default(READER)
+
+  posts       Post[]
+  comments    Comment[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([email])
+}
+
+model Post {
+  id          String       @id @default(uuid())
+  title       String
+  content     String       // consider using TEXT (default in Postgres)
+  type        String?      // e.g., article, tutorial, news
+
+  status      PostStatus   @default(DRAFT)
+
+  authorId    String
+  author      User         @relation(fields: [authorId], references: [id])
+
+  tags        PostTag[]
+  comments    Comment[]
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  publishedAt DateTime?
+
+  @@index([authorId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Tag {
+  id        String    @id @default(uuid())
+  name      String    @unique
+
+  posts     PostTag[]
+
+  createdAt DateTime  @default(now())
+}
+
+model PostTag {
+  postId String
+  tagId  String
+
+  post   Post @relation(fields: [postId], references: [id])
+  tag    Tag  @relation(fields: [tagId], references: [id])
+
+  @@id([postId, tagId])  // composite primary key
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id])
+
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+
+  // For future threaded comments (VERY IMPORTANT for scalability)
+  parentId  String?
+  parent    Comment? @relation("CommentToComment", fields: [parentId], references: [id])
+  replies   Comment[] @relation("CommentToComment")
+
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([authorId])
+}
+
