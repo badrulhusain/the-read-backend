@@ -8,13 +8,17 @@ export class PostsService {
   constructor(private readonly prisma: PrismaService) {}
 
   create(createPostDto: CreatePostDto) {
-    const { tagIds, ...rest } = createPostDto;
+    const { tags, ...rest } = createPostDto;
     return this.prisma.post.create({
       data: {
         ...rest,
-        tags: tagIds
-          ? { create: tagIds.map((tagId) => ({ tag: { connect: { id: tagId } } })) }
-          : undefined,
+        ...(tags?.length ? {
+          tags: {
+            create: tags.map((tagName) => ({
+              tag: { connectOrCreate: { where: { name: tagName }, create: { name: tagName } } }
+            }))
+          }
+        } : {}),
       },
       include: { author: { select: { id: true, name: true, email: true } }, tags: { include: { tag: true } } },
     });
@@ -50,15 +54,19 @@ export class PostsService {
   }
 
   update(id: string, updatePostDto: UpdatePostDto) {
-    const { tagIds, ...rest } = updatePostDto;
+    const { tags, ...rest } = updatePostDto;
     return this.prisma.post.update({
       where: { id },
       data: {
         ...rest,
-        ...(tagIds !== undefined && {
+        ...(tags !== undefined && {
           tags: {
             deleteMany: {},
-            create: tagIds.map((tagId) => ({ tag: { connect: { id: tagId } } })),
+            ...(tags.length ? {
+              create: tags.map((tagName) => ({
+                tag: { connectOrCreate: { where: { name: tagName }, create: { name: tagName } } }
+              }))
+            } : {})
           },
         }),
       },

@@ -6,6 +6,6 @@ export class CreatePostDto {
   type?: string;
   status?: PostStatus;
   authorId: string;
-  tagIds?: string[];
+  tags?: string[];
   publishedAt?: Date;
 }
