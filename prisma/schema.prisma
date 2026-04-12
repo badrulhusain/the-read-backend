@@ -43,8 +43,12 @@ model User {
 model Post {
   id          String       @id @default(uuid())
   title       String
-  content     String       // consider using TEXT (default in Postgres)
+  slug        String       @unique
+  content     String
+  excerpt     String?
+  coverImage  String?
   type        String?      // e.g., article, tutorial, news
+  viewCount   Int          @default(0)
 
   status      PostStatus   @default(DRAFT)
 
@@ -61,6 +65,7 @@ model Post {
   @@index([authorId])
   @@index([status])
   @@index([createdAt])
+  @@index([slug])
 }
 
 model Tag {
