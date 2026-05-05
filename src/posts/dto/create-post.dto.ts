@@ -9,6 +9,8 @@ export class CreatePostDto {
   @IsString()
   @IsNotEmpty()
   content: string;
+  excerpt?: string;
+  slug?: string;
 
   @IsOptional()
   @IsString()
@@ -25,6 +27,8 @@ export class CreatePostDto {
   @IsOptional()
   @IsEnum(PostStatus)
   status?: PostStatus;
+  authorId?: string;
+  tags?: string[];
 
   @IsUUID()
   @IsNotEmpty()
