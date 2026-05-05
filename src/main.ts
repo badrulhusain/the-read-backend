@@ -5,13 +5,8 @@ import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+
   app.setGlobalPrefix('api');
-
-  // Enable CORS to allow frontend connections
-  app.enableCors();
-
-  // Use the global exception filter
 
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -27,7 +22,6 @@ async function bootstrap() {
   );
 
   app.useGlobalFilters(new GlobalExceptionFilter());
-  app.setGlobalPrefix('api');
 
   await app.listen(process.env.PORT ?? 3000);
 }

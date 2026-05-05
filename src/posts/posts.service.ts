@@ -17,18 +17,6 @@ function toSlug(title: string, suffix = ''): string {
 export class PostsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createPostDto: CreatePostDto & { authorId: string }) {
-    const { tags, ...rest } = createPostDto;
-    return this.prisma.post.create({
-      data: {
-        ...rest,
-        ...(tags?.length ? {
-          tags: {
-            create: tags.map((tagName) => ({
-              tag: { connectOrCreate: { where: { name: tagName }, create: { name: tagName } } }
-            }))
-          }
-        } : {}),
   private async uniqueSlug(title: string): Promise<string> {
     let slug = toSlug(title);
     let existing = await this.prisma.post.findUnique({ where: { slug } });
@@ -40,7 +28,7 @@ export class PostsService {
     return slug;
   }
 
-  async create(createPostDto: CreatePostDto) {
+  async create(createPostDto: CreatePostDto & { authorId: string }) {
     const { tagIds, ...rest } = createPostDto;
     const slug = await this.uniqueSlug(rest.title);
     return this.prisma.post.create({
@@ -105,27 +93,6 @@ export class PostsService {
     return post;
   }
 
-  findBySlug(slug: string) {
-    return this.prisma.post.findUnique({
-      where: { slug },
-      include: {
-        author: { select: { id: true, name: true, email: true } },
-        tags: { include: { tag: true } },
-        comments: {
-          where: { parentId: null },
-          include: {
-            author: { select: { id: true, name: true } },
-            replies: { include: { author: { select: { id: true, name: true } } } },
-          },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
-  }
-
-  findOne(id: string) {
-    return this.prisma.post.findUnique({
-      where: { id },
   async findBySlug(slug: string) {
     const post = await this.prisma.post.findUnique({
       where: { slug },
@@ -148,21 +115,18 @@ export class PostsService {
     return { ...post, viewCount: post.viewCount + 1 };
   }
 
- 
   async update(id: string, updatePostDto: UpdatePostDto) {
     const { tagIds, ...rest } = updatePostDto;
     return this.prisma.post.update({
       where: { id },
       data: {
         ...rest,
-        ...(tags !== undefined && {
+        ...(tagIds !== undefined && {
           tags: {
             deleteMany: {},
-            ...(tags.length ? {
-              create: tags.map((tagName) => ({
-                tag: { connectOrCreate: { where: { name: tagName }, create: { name: tagName } } }
-              }))
-            } : {})
+            ...(tagIds.length ? {
+              create: tagIds.map((tagId) => ({ tag: { connect: { id: tagId } } })),
+            } : {}),
           },
         }),
       },
