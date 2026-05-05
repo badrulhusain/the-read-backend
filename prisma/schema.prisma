@@ -46,6 +46,12 @@ model Post {
   content     String
   excerpt     String?
   type        String?
+  slug        String       @unique
+  content     String
+  excerpt     String?
+  coverImage  String?
+  type        String?      // e.g., article, tutorial, news
+  viewCount   Int          @default(0)
 
   status      PostStatus   @default(DRAFT)
 
@@ -62,6 +68,7 @@ model Post {
   @@index([authorId])
   @@index([status])
   @@index([createdAt])
+  @@index([slug])
 }
 
 model Tag {
