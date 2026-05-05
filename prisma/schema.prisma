@@ -41,16 +41,12 @@ model User {
 
 model Post {
   id          String       @id @default(uuid())
-  slug        String?      @unique
+  slug        String       @unique
   title       String
   content     String
   excerpt     String?
-  type        String?
-  slug        String       @unique
-  content     String
-  excerpt     String?
   coverImage  String?
-  type        String?      // e.g., article, tutorial, news
+  type        String?
   viewCount   Int          @default(0)
 
   status      PostStatus   @default(DRAFT)
