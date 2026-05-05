@@ -38,6 +38,11 @@ export class AuthService {
     if (existingUser) {
       throw new ConflictException('Email already exists');
     }
-    return this.usersService.create(createUserDto);
+    const user = await this.usersService.create(createUserDto);
+    return this.login(user);
+  }
+
+  async getMe(userId: string) {
+    return this.usersService.findOne(userId);
   }
 }

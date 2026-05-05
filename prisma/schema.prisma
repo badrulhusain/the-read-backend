@@ -9,8 +9,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  
-  
 }
 
 enum Role {
@@ -43,9 +41,11 @@ model User {
 
 model Post {
   id          String       @id @default(uuid())
+  slug        String?      @unique
   title       String
-  content     String       // consider using TEXT (default in Postgres)
-  type        String?      // e.g., article, tutorial, news
+  content     String
+  excerpt     String?
+  type        String?
 
   status      PostStatus   @default(DRAFT)
 

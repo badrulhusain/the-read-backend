@@ -7,7 +7,7 @@ import { UpdatePostDto } from './dto/update-post.dto';
 export class PostsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createPostDto: CreatePostDto) {
+  create(createPostDto: CreatePostDto & { authorId: string }) {
     const { tags, ...rest } = createPostDto;
     return this.prisma.post.create({
       data: {
@@ -32,6 +32,24 @@ export class PostsService {
         _count: { select: { comments: true } },
       },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  findBySlug(slug: string) {
+    return this.prisma.post.findUnique({
+      where: { slug },
+      include: {
+        author: { select: { id: true, name: true, email: true } },
+        tags: { include: { tag: true } },
+        comments: {
+          where: { parentId: null },
+          include: {
+            author: { select: { id: true, name: true } },
+            replies: { include: { author: { select: { id: true, name: true } } } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
     });
   }
 
