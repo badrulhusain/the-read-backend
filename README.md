@@ -1,98 +1,410 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# The Read — Backend API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A production-ready RESTful API for a multi-user blogging platform. Built with NestJS, PostgreSQL, and Prisma ORM — featuring JWT authentication, role-based access control, threaded comments, image uploads via Cloudinary, and a full post lifecycle workflow.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## Project Status
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| Area | Status |
+|---|---|
+| Authentication (JWT) | ✅ Complete |
+| Role-Based Access Control | ✅ Complete |
+| Users Module | ✅ Complete |
+| Posts Module (CRUD + Lifecycle) | ✅ Complete |
+| Tags Module | ✅ Complete |
+| Comments Module (Threaded) | ✅ Complete |
+| Image Uploads (Cloudinary) | ✅ Complete |
+| Database Schema (Prisma) | ✅ Complete |
+| Global Error Handling | ✅ Complete |
+| CORS Configuration | ✅ Complete |
+| Input Validation | ✅ Complete |
 
-## Project setup
+---
 
-```bash
-$ npm install
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | NestJS 11 (TypeScript) |
+| Database | PostgreSQL (Neon cloud-hosted) |
+| ORM | Prisma 7 |
+| Authentication | JWT + Passport.js |
+| Image Storage | Cloudinary |
+| Validation | class-validator / class-transformer |
+| Password Hashing | bcrypt (12 salt rounds) |
+| Runtime | Node.js 20+ |
+
+---
+
+## Architecture Overview
+
+```
+src/
+├── auth/          # JWT auth, guards, strategies, decorators
+├── users/         # User management, profile, role handling
+├── posts/         # Post CRUD, lifecycle, pagination, slug routing
+├── comments/      # Threaded comment system with nested replies
+├── tags/          # Tag CRUD, post associations
+├── uploads/       # Image upload endpoint
+├── cloudinary/    # Cloudinary service wrapper
+├── common/        # Global exception filter
+├── prisma.service.ts
+└── main.ts
 ```
 
-## Compile and run the project
+---
 
-```bash
-# development
-$ npm run start
+## Database Schema
 
-# watch mode
-$ npm run start:dev
+### User
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | Primary key |
+| name | String? | Optional display name |
+| email | String | Unique, indexed |
+| password | String | bcrypt hashed, never returned in responses |
+| role | Enum | `ADMIN`, `AUTHOR`, `READER` (default: `READER`) |
+| createdAt | DateTime | Auto-set |
+| updatedAt | DateTime | Auto-updated |
 
-# production mode
-$ npm run start:prod
+### Post
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | Primary key |
+| slug | String | Unique, indexed, auto-generated from title |
+| title | String | |
+| content | String | |
+| excerpt | String? | Optional summary |
+| coverImage | String? | URL to Cloudinary-hosted image |
+| type | String? | Optional content category |
+| viewCount | Int | Auto-incremented on slug access |
+| status | Enum | `DRAFT`, `PUBLISHED`, `ARCHIVED` (default: `DRAFT`) |
+| authorId | UUID | FK → User |
+| publishedAt | DateTime? | Set automatically when status → `PUBLISHED` |
+| createdAt | DateTime | |
+| updatedAt | DateTime | |
+
+### Tag
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | Primary key |
+| name | String | Unique |
+| createdAt | DateTime | |
+
+### PostTag (junction)
+| Field | Type | Notes |
+|---|---|---|
+| postId | UUID | FK → Post |
+| tagId | UUID | FK → Tag |
+
+### Comment
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | Primary key |
+| content | String | |
+| postId | UUID | FK → Post, indexed |
+| authorId | UUID | FK → User, indexed |
+| parentId | UUID? | FK → Comment self-reference (threading) |
+| createdAt | DateTime | |
+
+---
+
+## API Reference
+
+**Base URL:** `/api`
+
+All protected routes require the header:
+```
+Authorization: Bearer <token>
 ```
 
-## Run tests
+---
 
-```bash
-# unit tests
-$ npm run test
+### Auth
 
-# e2e tests
-$ npm run test:e2e
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/register` | Public | Register a new user |
+| `POST` | `/api/auth/login` | Public | Login, returns JWT token |
+| `GET` | `/api/auth/me` | JWT | Get current user profile |
 
-# test coverage
-$ npm run test:cov
+**Register body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "minimum8chars",
+  "name": "Display Name"
+}
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+**Login response:**
+```json
+{
+  "user": { "id": "...", "email": "...", "role": "READER" },
+  "access_token": "<jwt>"
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+### Users
 
-Check out a few resources that may come in handy when working with NestJS:
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/users` | JWT + ADMIN | List all users |
+| `GET` | `/api/users/:id` | JWT | Get user by ID (includes latest 10 posts) |
+| `PATCH` | `/api/users/:id` | JWT | Update user profile |
+| `DELETE` | `/api/users/:id` | JWT + ADMIN | Delete user |
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+---
 
-## Support
+### Posts
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/posts` | JWT | Create a new post |
+| `GET` | `/api/posts` | Public | List posts with pagination and filters |
+| `GET` | `/api/posts/:id` | Public | Get post by ID |
+| `GET` | `/api/posts/slug/:slug` | Public | Get post by slug (increments view count) |
+| `PATCH` | `/api/posts/:id` | JWT | Update post |
+| `DELETE` | `/api/posts/:id` | JWT + ADMIN | Delete post |
 
-## Stay in touch
+**Query parameters for `GET /api/posts`:**
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+| Param | Default | Description |
+|---|---|---|
+| `page` | `1` | Page number |
+| `limit` | `10` | Results per page |
+| `status` | — | Filter by `DRAFT`, `PUBLISHED`, or `ARCHIVED` |
+| `tag` | — | Filter by tag name |
 
-## License
+**Create / update post body:**
+```json
+{
+  "title": "My Post Title",
+  "content": "Full post body...",
+  "excerpt": "Short summary shown in listings",
+  "coverImage": "https://res.cloudinary.com/...",
+  "status": "DRAFT",
+  "tags": ["technology", "javascript"]
+}
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+---
+
+### Tags
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/tags` | JWT | Create a tag |
+| `GET` | `/api/tags` | Public | List all tags |
+| `GET` | `/api/tags/:id` | Public | Get tag with associated posts |
+| `PATCH` | `/api/tags/:id` | JWT | Update tag |
+| `DELETE` | `/api/tags/:id` | JWT | Delete tag |
+
+---
+
+### Comments
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/comments` | JWT | Create a comment or reply |
+| `GET` | `/api/comments` | Public | List top-level comments with nested replies |
+| `GET` | `/api/comments/post/:postId` | Public | Get all comments for a post |
+| `GET` | `/api/comments/:id` | Public | Get a single comment with its replies |
+| `PATCH` | `/api/comments/:id` | JWT | Update a comment |
+| `DELETE` | `/api/comments/:id` | JWT | Delete a comment |
+
+**Create comment body:**
+```json
+{
+  "content": "Great article!",
+  "postId": "<post-uuid>",
+  "parentId": "<parent-comment-uuid>"
+}
+```
+> Omit `parentId` for top-level comments. Include it to reply to an existing comment (supports infinite nesting).
+
+---
+
+### Uploads
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/uploads/image` | JWT | Upload an image to Cloudinary |
+
+**Request:** `multipart/form-data` with field `file`.
+- Max file size: **5 MB**
+- Accepted types: images only (`image/*`)
+
+**Response:**
+```json
+{
+  "url": "https://res.cloudinary.com/...",
+  "publicId": "the-read/covers/..."
+}
+```
+
+---
+
+## Role Permissions Summary
+
+| Action | READER | AUTHOR | ADMIN |
+|---|---|---|---|
+| Read posts / tags / comments | ✅ | ✅ | ✅ |
+| Create posts | — | ✅ | ✅ |
+| Edit own posts | — | ✅ | ✅ |
+| Delete any post | — | — | ✅ |
+| Create comments | ✅ | ✅ | ✅ |
+| Edit / delete own comments | ✅ | ✅ | ✅ |
+| Upload images | ✅ | ✅ | ✅ |
+| List all users | — | — | ✅ |
+| Delete users | — | — | ✅ |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- PostgreSQL database (local or cloud, e.g., [Neon](https://neon.tech))
+- Cloudinary account
+
+### Installation
+
+```bash
+git clone https://github.com/<your-org>/the-read-backend.git
+cd the-read-backend
+npm install
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@host:5432/theread
+DIRECT_URL=postgresql://user:password@host:5432/theread   # optional, for direct migrations
+
+# Auth
+JWT_SECRET=your-super-secret-key-change-in-production
+JWT_EXPIRATION=7d
+
+# Server
+PORT=3000
+NODE_ENV=development
+
+# CORS — allowed frontend origin(s)
+FRONTEND_URL=http://localhost:5173
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-api-key
+CLOUDINARY_API_SECRET=your-api-secret
+```
+
+### Database Setup
+
+```bash
+# Apply migrations and generate Prisma client
+npx prisma migrate deploy
+npx prisma generate
+```
+
+### Run
+
+```bash
+# Development (hot-reload)
+npm run start:dev
+
+# Production
+npm run build
+npm run start:prod
+```
+
+The API will be available at `http://localhost:3000/api`.
+
+---
+
+## Scripts
+
+| Script | Description |
+|---|---|
+| `npm run start:dev` | Development mode with auto-reload |
+| `npm run build` | Compile TypeScript + generate Prisma client |
+| `npm run start:prod` | Run compiled production build |
+| `npm run lint` | Run ESLint with auto-fix |
+| `npm run format` | Format code with Prettier |
+| `npm test` | Run unit tests |
+| `npm run test:cov` | Generate test coverage report |
+| `npm run test:e2e` | Run end-to-end tests |
+
+---
+
+## Key Implementation Details
+
+- **Slug generation** — slugs are auto-generated from the post title on creation. Duplicate slugs receive a numeric suffix (e.g., `my-post-2`).
+- **View counting** — accessing a post via `/api/posts/slug/:slug` atomically increments its `viewCount` field.
+- **Threaded comments** — comments support infinite nesting via `parentId` self-reference. Top-level queries eagerly return all nested replies.
+- **Post lifecycle** — posts follow a `DRAFT → PUBLISHED → ARCHIVED` workflow. The `publishedAt` timestamp is set automatically when status changes to `PUBLISHED`.
+- **CORS** — origins are validated dynamically against `FRONTEND_URL`. Credentials are enabled for header-based auth.
+- **Error responses** — all errors follow a consistent format with `statusCode`, `message`, `timestamp`, and `path`. Stack traces are included only in development.
+- **Validation** — all request bodies are validated with `class-validator`. Unknown fields are stripped automatically (whitelist mode enabled globally).
+- **Security** — passwords are hashed with bcrypt (12 rounds) and are never returned in any response. JWT tokens expire after a configurable duration (default `7d`).
+
+---
+
+## Project Structure
+
+```
+the-read-backend/
+├── prisma/
+│   └── schema.prisma              # Database models and relations
+├── src/
+│   ├── auth/
+│   │   ├── decorators/            # @Roles() decorator
+│   │   ├── dto/                   # RegisterDto, LoginDto
+│   │   ├── guards/                # JwtAuthGuard, RolesGuard
+│   │   ├── strategies/            # JwtStrategy
+│   │   ├── auth.controller.ts
+│   │   ├── auth.service.ts
+│   │   └── auth.module.ts
+│   ├── users/
+│   │   ├── dto/
+│   │   ├── users.controller.ts
+│   │   ├── users.service.ts
+│   │   └── users.module.ts
+│   ├── posts/
+│   │   ├── dto/
+│   │   ├── posts.controller.ts
+│   │   ├── posts.service.ts
+│   │   └── posts.module.ts
+│   ├── comments/
+│   │   ├── dto/
+│   │   ├── comments.controller.ts
+│   │   ├── comments.service.ts
+│   │   └── comments.module.ts
+│   ├── tags/
+│   │   ├── dto/
+│   │   ├── tags.controller.ts
+│   │   ├── tags.service.ts
+│   │   └── tags.module.ts
+│   ├── uploads/
+│   │   ├── uploads.controller.ts
+│   │   └── uploads.module.ts
+│   ├── cloudinary/
+│   │   ├── cloudinary.service.ts
+│   │   └── cloudinary.module.ts
+│   ├── common/
+│   │   └── filters/
+│   │       └── global-exception.filter.ts
+│   ├── app.module.ts
+│   ├── prisma.service.ts
+│   └── main.ts
+├── .env.example
+├── package.json
+└── tsconfig.json
+```

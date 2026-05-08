@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/home/badrulhusain/Music/theread-client/src/features/the-read/components",
+      "/home/badrulhusain/Music/theread-client/src/features/the-read"
+    ],
+    "allow": [
+      "Read(//home/badrulhusain/Music/theread-client/**)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

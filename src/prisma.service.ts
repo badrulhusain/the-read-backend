@@ -9,8 +9,7 @@ export class PrismaService
   implements OnModuleInit
 {
   constructor() {
-    // Use DIRECT_URL for pg Pool because pg throws Tenant or user not found with pooler url
-    const pool = new Pool({ connectionString: process.env.DIRECT_URL });
+    const pool = new Pool({ connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL });
     const adapter = new PrismaPg(pool as any);
     super({ adapter });
   }
