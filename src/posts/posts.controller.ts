@@ -11,8 +11,7 @@ import { Role } from '@prisma/client';
 export class PostsController {
   constructor(private readonly postsService: PostsService) {}
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.AUTHOR)
+  @UseGuards(JwtAuthGuard)
   @Post()
   create(@Body() createPostDto: CreatePostDto, @Request() req: any) {
     return this.postsService.create({ ...createPostDto, authorId: req.user.id });
@@ -38,8 +37,7 @@ export class PostsController {
     return this.postsService.findOne(id);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.AUTHOR)
+  @UseGuards(JwtAuthGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() updatePostDto: UpdatePostDto) {
     return this.postsService.update(id, updatePostDto);

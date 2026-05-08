@@ -1,5 +1,5 @@
 import { PostStatus } from '@prisma/client';
-import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, IsDateString, IsUrl } from 'class-validator';
+import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, IsDateString, IsUrl, ValidateIf } from 'class-validator';
 
 export class CreatePostDto {
   @IsString()
@@ -15,7 +15,8 @@ export class CreatePostDto {
   excerpt?: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsUrl({}, { message: 'coverImage must be a valid URL' })
+  @ValidateIf((o) => o.coverImage !== '')
   coverImage?: string;
 
   @IsOptional()
