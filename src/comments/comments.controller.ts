@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
@@ -31,13 +31,23 @@ export class CommentsController {
 
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateCommentDto: UpdateCommentDto) {
+  async update(@Param('id') id: string, @Body() updateCommentDto: UpdateCommentDto, @Request() req: any) {
+    const comment = await this.commentsService.findOne(id);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.author.id !== req.user.id && req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('You can only edit your own comments');
+    }
     return this.commentsService.update(id, updateCommentDto);
   }
 
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @Request() req: any) {
+    const comment = await this.commentsService.findOne(id);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.author.id !== req.user.id && req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('You can only delete your own comments');
+    }
     return this.commentsService.remove(id);
   }
 }

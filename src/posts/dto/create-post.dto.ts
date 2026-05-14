@@ -6,9 +6,9 @@ export class CreatePostDto {
   @IsNotEmpty()
   title: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  content: string;
+  content?: string;
 
   @IsOptional()
   @IsString()

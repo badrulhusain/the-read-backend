@@ -7,7 +7,7 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 export class CommentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createCommentDto: CreateCommentDto) {
+  create(createCommentDto: CreateCommentDto & { authorId: string }) {
     return this.prisma.comment.create({
       data: createCommentDto,
       include: { author: { select: { id: true, name: true } } },

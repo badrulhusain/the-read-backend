@@ -9,9 +9,9 @@ export class CreateCommentDto {
   @IsNotEmpty()
   postId: string;
 
+  @IsOptional()
   @IsUUID()
-  @IsNotEmpty()
-  authorId: string;
+  authorId?: string;
 
   @IsOptional()
   @IsUUID()

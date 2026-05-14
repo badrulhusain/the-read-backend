@@ -1,11 +1,8 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request, ForbiddenException, HttpCode, HttpStatus } from '@nestjs/common';
 import { PostsService } from './posts.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { Role } from '@prisma/client';
 
 @Controller('posts')
 export class PostsController {
@@ -32,6 +29,24 @@ export class PostsController {
     return this.postsService.findBySlug(slug);
   }
 
+  @Post('slug/:slug/view')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async incrementView(@Param('slug') slug: string) {
+    await this.postsService.incrementView(slug);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/like')
+  toggleLike(@Param('id') id: string, @Request() req: any) {
+    return this.postsService.toggleLike(id, req.user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/like-status')
+  getLikeStatus(@Param('id') id: string, @Request() req: any) {
+    return this.postsService.getLikeStatus(id, req.user.id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.postsService.findOne(id);
@@ -39,14 +54,21 @@ export class PostsController {
 
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updatePostDto: UpdatePostDto) {
+  async update(@Param('id') id: string, @Body() updatePostDto: UpdatePostDto, @Request() req: any) {
+    const post = await this.postsService.findOne(id);
+    if (post.authorId !== req.user.id && req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('Only the author or an admin can edit this post');
+    }
     return this.postsService.update(id, updatePostDto);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @UseGuards(JwtAuthGuard)
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @Request() req: any) {
+    const post = await this.postsService.findOne(id);
+    if (post.authorId !== req.user.id && req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('Only the author or an admin can delete this post');
+    }
     return this.postsService.remove(id);
   }
 }
