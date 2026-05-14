@@ -34,6 +34,7 @@ export class PostsService {
     return this.prisma.post.create({
       data: {
         ...rest,
+        content: rest.content ?? '',
         slug,
         tags: tagIds
           ? { create: tagIds.map((tagId) => ({ tag: { connect: { id: tagId } } })) }
@@ -107,12 +108,38 @@ export class PostsService {
           },
           orderBy: { createdAt: 'asc' },
         },
+        _count: { select: { likes: true } },
       },
     });
     if (!post) throw new NotFoundException(`Post not found`);
+    return post;
+  }
 
+  async incrementView(slug: string) {
     await this.prisma.post.update({ where: { slug }, data: { viewCount: { increment: 1 } } });
-    return { ...post, viewCount: post.viewCount + 1 };
+  }
+
+  async getLikeStatus(postId: string, userId: string): Promise<{ liked: boolean; likeCount: number }> {
+    const [existing, likeCount] = await Promise.all([
+      this.prisma.postLike.findUnique({ where: { postId_userId: { postId, userId } } }),
+      this.prisma.postLike.count({ where: { postId } }),
+    ]);
+    return { liked: !!existing, likeCount };
+  }
+
+  async toggleLike(postId: string, userId: string): Promise<{ liked: boolean; likeCount: number }> {
+    const existing = await this.prisma.postLike.findUnique({
+      where: { postId_userId: { postId, userId } },
+    });
+
+    if (existing) {
+      await this.prisma.postLike.delete({ where: { postId_userId: { postId, userId } } });
+    } else {
+      await this.prisma.postLike.create({ data: { postId, userId } });
+    }
+
+    const likeCount = await this.prisma.postLike.count({ where: { postId } });
+    return { liked: !existing, likeCount };
   }
 
   async update(id: string, updatePostDto: UpdatePostDto) {

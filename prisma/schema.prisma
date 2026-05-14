@@ -32,6 +32,7 @@ model User {
 
   posts       Post[]
   comments    Comment[]
+  likes       PostLike[]
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -56,6 +57,7 @@ model Post {
 
   tags        PostTag[]
   comments    Comment[]
+  likes       PostLike[]
 
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -65,6 +67,19 @@ model Post {
   @@index([status])
   @@index([createdAt])
   @@index([slug])
+}
+
+model PostLike {
+  postId String
+  userId String
+
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId])
+  @@index([postId])
 }
 
 model Tag {
