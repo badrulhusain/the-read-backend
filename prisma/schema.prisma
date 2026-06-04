@@ -38,6 +38,13 @@ enum ReviewDecision {
   REVISION_REQUESTED
 }
 
+enum CommentStatus {
+  VISIBLE
+  HIDDEN
+  DELETED
+  PENDING
+}
+
 model User {
   id           String     @id @default(uuid())
   name         String
@@ -46,11 +53,15 @@ model User {
   role         Role       @default(USER)
   status       UserStatus @default(ACTIVE)
 
+  avatarUrl      String?
+  avatarPublicId String?
+
   blogs         Blog[]        @relation("BlogAuthor")
   assignedBlogs Blog[]        @relation("AssignedEditor")
   reviews       BlogReview[]
   versions      BlogVersion[]
   auditLogs     AuditLog[]
+  comments      Comment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -66,7 +77,8 @@ model Blog {
   slug       String  @unique
   excerpt    String?
   content    String
-  coverImage String?
+  coverImage         String?
+  coverImagePublicId String?
 
   status BlogStatus @default(DRAFT)
 
@@ -76,10 +88,21 @@ model Blog {
   assignedEditorId String?
   assignedEditor   User?   @relation("AssignedEditor", fields: [assignedEditorId], references: [id], onDelete: SetNull)
 
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  tags BlogTag[]
+
+  wordCount      Int?
+  readingTime    Int?
+  seoTitle       String?
+  seoDescription String?
+
   publishedAt DateTime?
 
   reviews  BlogReview[]
   versions BlogVersion[]
+  comments Comment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -88,8 +111,48 @@ model Blog {
   @@index([status])
   @@index([authorId])
   @@index([assignedEditorId])
+  @@index([categoryId])
   @@index([publishedAt])
   @@index([createdAt])
+}
+
+model Category {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+  blogs       Blog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model Tag {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  slug     String    @unique
+  isActive Boolean   @default(true)
+  blogs    BlogTag[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model BlogTag {
+  blogId String
+  tagId  String
+  blog   Blog   @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([blogId, tagId])
+  @@index([tagId])
 }
 
 model BlogReview {
@@ -101,8 +164,11 @@ model BlogReview {
   editorId String
   editor   User   @relation(fields: [editorId], references: [id], onDelete: Restrict)
 
-  decision ReviewDecision
-  comment  String?
+  decision        ReviewDecision
+  comment         String?
+  plagiarismScore Int?
+  plagiarismNote  String?
+  checklist       Json?
 
   createdAt DateTime @default(now())
 
@@ -128,6 +194,26 @@ model BlogVersion {
 
   @@index([blogId])
   @@index([editedById])
+}
+
+model Comment {
+  id       String        @id @default(uuid())
+  blogId   String
+  blog     Blog          @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId String?
+  content  String
+  status   CommentStatus @default(VISIBLE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([blogId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([parentId])
 }
 
 model AuditLog {

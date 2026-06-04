@@ -4,12 +4,21 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BlogStatus, Role, UserStatus } from '../generated/prisma/client';
+import {
+  BlogStatus,
+  CommentStatus,
+  Role,
+  UserStatus,
+} from '../generated/prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../database/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
-import { AdminUserQueryDto, AdminBlogQueryDto } from './dto/admin-query.dto';
+import {
+  AdminUserQueryDto,
+  AdminBlogQueryDto,
+  AdminCommentQueryDto,
+} from './dto/admin-query.dto';
 import { paginate } from '../common/utils/pagination.util';
 
 const USER_SAFE_SELECT = {
@@ -26,14 +35,14 @@ const BLOG_LIST_SELECT = {
   id: true,
   title: true,
   slug: true,
-  excerpt: true,
-  coverImage: true,
   status: true,
   publishedAt: true,
+  readingTime: true,
   createdAt: true,
   updatedAt: true,
   author: { select: { id: true, name: true } },
   assignedEditor: { select: { id: true, name: true } },
+  category: { select: { id: true, name: true, slug: true } },
 } as const;
 
 @Injectable()
@@ -44,16 +53,27 @@ export class AdminService {
   ) {}
 
   async getStats() {
-    const [totalUsers, totalEditors, submittedBlogs, approvedBlogs, publishedBlogs] =
-      await this.prisma.$transaction([
-        this.prisma.user.count(),
-        this.prisma.user.count({ where: { role: Role.EDITOR } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
-      ]);
+    const [
+      totalUsers,
+      totalEditors,
+      submittedBlogs,
+      approvedBlogs,
+      publishedBlogs,
+    ] = await this.prisma.$transaction([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { role: Role.EDITOR } }),
+      this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
+      this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
+      this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
+    ]);
 
-    return { totalUsers, totalEditors, submittedBlogs, approvedBlogs, publishedBlogs };
+    return {
+      totalUsers,
+      totalEditors,
+      submittedBlogs,
+      approvedBlogs,
+      publishedBlogs,
+    };
   }
 
   async createEditor(actorId: string, dto: CreateStaffDto) {
@@ -198,6 +218,7 @@ export class AdminService {
 
     const where = {
       ...(query.status ? { status: query.status } : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
       ...(query.search
         ? { title: { contains: query.search, mode: 'insensitive' as const } }
         : {}),
@@ -221,6 +242,9 @@ export class AdminService {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
 
+    if (blog.status === BlogStatus.PUBLISHED) {
+      throw new ConflictException('Blog is already published');
+    }
     if (blog.status !== BlogStatus.APPROVED) {
       throw new BadRequestException('Only APPROVED blogs can be published');
     }
@@ -236,6 +260,10 @@ export class AdminService {
       action: 'BLOG_PUBLISHED',
       entityType: 'Blog',
       entityId: blogId,
+      metadata: {
+        oldStatus: blog.status,
+        newStatus: BlogStatus.PUBLISHED,
+      },
     });
 
     return updated;
@@ -260,9 +288,66 @@ export class AdminService {
       action: 'BLOG_UNPUBLISHED',
       entityType: 'Blog',
       entityId: blogId,
+      metadata: {
+        oldStatus: blog.status,
+        newStatus: BlogStatus.UNPUBLISHED,
+      },
     });
 
     return updated;
+  }
+
+  async listComments(query: AdminCommentQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where: Record<string, unknown> = {};
+    if (query.status) where.status = query.status;
+    if (query.search) {
+      where.content = { contains: query.search, mode: 'insensitive' };
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.comment.findMany({
+        where,
+        select: {
+          id: true,
+          content: true,
+          status: true,
+          parentId: true,
+          createdAt: true,
+          updatedAt: true,
+          user: { select: { id: true, name: true } },
+          blog: { select: { id: true, title: true, slug: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.comment.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
+  async moderateComment(id: string, status: CommentStatus) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    return this.prisma.comment.update({
+      where: { id },
+      data: { status },
+      select: {
+        id: true,
+        content: true,
+        status: true,
+        createdAt: true,
+      },
+    });
   }
 
   private async findUserOrThrow(id: string) {

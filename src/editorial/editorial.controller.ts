@@ -11,14 +11,21 @@ import { Role } from '../generated/prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { EditorialEditDto } from './dto/editorial-edit.dto';
-import { EditorialDecisionDto } from './dto/editorial-note.dto';
-import { EditorialQueryDto } from './dto/editorial-query.dto';
+import {
+  ApproveBlogDto,
+  RejectBlogDto,
+  RequestRevisionDto,
+} from './dto/editorial-note.dto';
+import {
+  EditorialBlogQueryDto,
+  EditorialQueryDto,
+} from './dto/editorial-query.dto';
 import { EditorialService } from './editorial.service';
 
 type RequestUser = { id: string; role: Role };
 
 @Roles(Role.EDITOR, Role.ADMIN)
-@Controller('editor')
+@Controller('editorial')
 export class EditorialController {
   constructor(private readonly editorialService: EditorialService) {}
 
@@ -32,6 +39,14 @@ export class EditorialController {
     return this.editorialService.listSubmissions(query);
   }
 
+  @Get('blogs')
+  listBlogs(
+    @Query() query: EditorialBlogQueryDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.editorialService.listBlogs(query, user);
+  }
+
   @Get('blogs/:id')
   getBlog(@Param('id') id: string, @CurrentUser() user: RequestUser) {
     return this.editorialService.getBlog(id, user);
@@ -42,7 +57,7 @@ export class EditorialController {
     return this.editorialService.pick(id, user);
   }
 
-  @Patch('blogs/:id')
+  @Patch('blogs/:id/edit')
   edit(
     @Param('id') id: string,
     @CurrentUser() user: RequestUser,
@@ -52,15 +67,19 @@ export class EditorialController {
   }
 
   @Post('blogs/:id/approve')
-  approve(@Param('id') id: string, @CurrentUser() user: RequestUser) {
-    return this.editorialService.approve(id, user);
+  approve(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ApproveBlogDto,
+  ) {
+    return this.editorialService.approve(id, user, dto);
   }
 
   @Post('blogs/:id/reject')
   reject(
     @Param('id') id: string,
     @CurrentUser() user: RequestUser,
-    @Body() dto: EditorialDecisionDto,
+    @Body() dto: RejectBlogDto,
   ) {
     return this.editorialService.reject(id, user, dto);
   }
@@ -69,7 +88,7 @@ export class EditorialController {
   requestRevision(
     @Param('id') id: string,
     @CurrentUser() user: RequestUser,
-    @Body() dto: EditorialDecisionDto,
+    @Body() dto: RequestRevisionDto,
   ) {
     return this.editorialService.requestRevision(id, user, dto);
   }

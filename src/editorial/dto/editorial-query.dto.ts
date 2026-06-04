@@ -1,5 +1,6 @@
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { BlogStatus } from '../../generated/prisma/client';
 
 export class EditorialQueryDto {
   @IsOptional()
@@ -14,4 +15,10 @@ export class EditorialQueryDto {
   @Min(1)
   @Max(50)
   limit?: number = 10;
+}
+
+export class EditorialBlogQueryDto extends EditorialQueryDto {
+  @IsOptional()
+  @IsEnum(BlogStatus)
+  status?: BlogStatus;
 }

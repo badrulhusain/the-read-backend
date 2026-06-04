@@ -8,6 +8,12 @@ import { UsersModule } from './users/users.module';
 import { BlogsModule } from './blogs/blogs.module';
 import { EditorialModule } from './editorial/editorial.module';
 import { AdminModule } from './admin/admin.module';
+import { CategoriesModule } from './categories/categories.module';
+import { TagsModule } from './tags/tags.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { CommentsModule } from './comments/comments.module';
+import { UploadsModule } from './uploads/uploads.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -20,6 +26,12 @@ import { AdminModule } from './admin/admin.module';
     BlogsModule,
     EditorialModule,
     AdminModule,
+    CategoriesModule,
+    TagsModule,
+    DashboardModule,
+    CommentsModule,
+    UploadsModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

@@ -10,8 +10,14 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateBlogDto } from './dto/create-blog.dto';
 import { UpdateBlogDto } from './dto/update-blog.dto';
 import { BlogQueryDto } from './dto/blog-query.dto';
+import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
 import { generateSlug, makeUniqueSlug } from '../common/utils/slug.util';
 import { paginate } from '../common/utils/pagination.util';
+import { sanitizeBlogHtml } from '../common/utils/sanitize-blog-html';
+import { computeReadingStats } from '../common/utils/reading-time';
+
+const TAG_SELECT = { id: true, name: true, slug: true } as const;
+const CATEGORY_SELECT = { id: true, name: true, slug: true } as const;
 
 const BLOG_LIST_SELECT = {
   id: true,
@@ -19,17 +25,32 @@ const BLOG_LIST_SELECT = {
   slug: true,
   excerpt: true,
   coverImage: true,
+  coverImagePublicId: true,
   status: true,
   publishedAt: true,
+  readingTime: true,
+  wordCount: true,
   createdAt: true,
   updatedAt: true,
-  author: { select: { id: true, name: true } },
+  author: { select: { id: true, name: true, avatarUrl: true } },
+  category: { select: CATEGORY_SELECT },
+  tags: { select: { tag: { select: TAG_SELECT } } },
+  _count: { select: { comments: true } },
 } as const;
 
 const BLOG_DETAIL_SELECT = {
   ...BLOG_LIST_SELECT,
   content: true,
+  seoTitle: true,
+  seoDescription: true,
   assignedEditorId: true,
+} as const;
+
+const USER_SAFE_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
 } as const;
 
 type RequestUser = { id: string; role: Role };
@@ -47,18 +68,49 @@ export class BlogsService {
   ) {}
 
   async create(user: RequestUser, dto: CreateBlogDto) {
+    const { tagIds, categoryId, content, ...rest } = dto;
+
+    const sanitized = sanitizeBlogHtml(content);
+    if (!sanitized.trim()) {
+      throw new BadRequestException('Blog content is empty after sanitization');
+    }
+
+    if (categoryId) await this.assertCategoryExists(categoryId);
+    if (tagIds?.length) await this.assertTagsExist(tagIds);
+
     const base = generateSlug(dto.title);
     const existing = await this.prisma.blog.findMany({
       where: { slug: { startsWith: base } },
       select: { slug: true },
     });
-    const slugSet = new Set(existing.map((b) => b.slug));
-    const slug = makeUniqueSlug(base, slugSet);
+    const slug = makeUniqueSlug(base, new Set(existing.map((b) => b.slug)));
 
-    return this.prisma.blog.create({
-      data: { ...dto, slug, authorId: user.id },
+    const { wordCount, readingTime } = computeReadingStats(sanitized);
+
+    const blog = await this.prisma.blog.create({
+      data: {
+        ...rest,
+        content: sanitized,
+        slug,
+        authorId: user.id,
+        wordCount,
+        readingTime,
+        categoryId: categoryId ?? null,
+        ...(tagIds?.length
+          ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } }
+          : {}),
+      },
       select: BLOG_DETAIL_SELECT,
     });
+
+    await this.audit.log({
+      actorId: user.id,
+      action: 'BLOG_CREATED',
+      entityType: 'Blog',
+      entityId: blog.id,
+    });
+
+    return blog;
   }
 
   async update(id: string, user: RequestUser, dto: UpdateBlogDto) {
@@ -81,23 +133,61 @@ export class BlogsService {
       }
     }
 
-    const data: Record<string, unknown> = { ...dto };
+    const { tagIds, categoryId, content, title, ...rest } = dto;
 
-    if (dto.title && dto.title !== blog.title) {
-      const base = generateSlug(dto.title);
-      const existing = await this.prisma.blog.findMany({
-        where: { slug: { startsWith: base }, NOT: { id } },
-        select: { slug: true },
-      });
-      const slugSet = new Set(existing.map((b) => b.slug));
-      data.slug = makeUniqueSlug(base, slugSet);
+    const data: Record<string, unknown> = { ...rest };
+
+    if (content !== undefined) {
+      const sanitized = sanitizeBlogHtml(content);
+      if (!sanitized.trim()) {
+        throw new BadRequestException(
+          'Blog content is empty after sanitization',
+        );
+      }
+      const { wordCount, readingTime } = computeReadingStats(sanitized);
+      data.content = sanitized;
+      data.wordCount = wordCount;
+      data.readingTime = readingTime;
     }
 
-    return this.prisma.blog.update({
-      where: { id },
-      data,
-      select: BLOG_DETAIL_SELECT,
+    if (title !== undefined) {
+      data.title = title;
+      if (title !== blog.title) {
+        const base = generateSlug(title);
+        const existing = await this.prisma.blog.findMany({
+          where: { slug: { startsWith: base }, NOT: { id } },
+          select: { slug: true },
+        });
+        data.slug = makeUniqueSlug(base, new Set(existing.map((b) => b.slug)));
+      }
+    }
+
+    if (categoryId !== undefined) {
+      if (categoryId) await this.assertCategoryExists(categoryId);
+      data.categoryId = categoryId ?? null;
+    }
+
+    if (tagIds !== undefined && tagIds.length) {
+      await this.assertTagsExist(tagIds);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (tagIds !== undefined) {
+        await tx.blogTag.deleteMany({ where: { blogId: id } });
+        if (tagIds.length) {
+          await tx.blogTag.createMany({
+            data: tagIds.map((tagId) => ({ blogId: id, tagId })),
+          });
+        }
+      }
+      return tx.blog.update({
+        where: { id },
+        data,
+        select: BLOG_DETAIL_SELECT,
+      });
     });
+
+    return updated;
   }
 
   async submit(id: string, user: RequestUser) {
@@ -117,17 +207,23 @@ export class BlogsService {
       );
     }
 
+    const isResubmit = blog.status === BlogStatus.REVISION_REQUESTED;
+
     const updated = await this.prisma.blog.update({
       where: { id },
-      data: { status: BlogStatus.SUBMITTED },
+      data: { status: BlogStatus.SUBMITTED, assignedEditorId: null },
       select: BLOG_DETAIL_SELECT,
     });
 
     await this.audit.log({
       actorId: user.id,
-      action: 'BLOG_SUBMITTED',
+      action: isResubmit ? 'BLOG_RESUBMITTED' : 'BLOG_SUBMITTED',
       entityType: 'Blog',
       entityId: id,
+      metadata: {
+        oldStatus: blog.status,
+        newStatus: BlogStatus.SUBMITTED,
+      },
     });
 
     return updated;
@@ -138,12 +234,22 @@ export class BlogsService {
     const limit = query.limit ?? 10;
     const skip = (page - 1) * limit;
 
-    const where = {
-      status: BlogStatus.PUBLISHED,
-      ...(query.search
-        ? { title: { contains: query.search, mode: 'insensitive' as const } }
-        : {}),
-    };
+    const where: Record<string, unknown> = { status: BlogStatus.PUBLISHED };
+
+    if (query.search) {
+      where.OR = [
+        { title: { contains: query.search, mode: 'insensitive' } },
+        { excerpt: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.category) {
+      where.category = { slug: query.category };
+    }
+
+    if (query.tag) {
+      where.tags = { some: { tag: { slug: query.tag } } };
+    }
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.blog.findMany({
@@ -163,16 +269,23 @@ export class BlogsService {
     const blog = await this.prisma.blog.findUnique({
       where: { slug },
       select: {
-        ...BLOG_DETAIL_SELECT,
-        reviews: {
-          select: {
-            decision: true,
-            comment: true,
-            createdAt: true,
-            editor: { select: { name: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-        },
+        id: true,
+        title: true,
+        slug: true,
+        excerpt: true,
+        content: true,
+        coverImage: true,
+        coverImagePublicId: true,
+        publishedAt: true,
+        readingTime: true,
+        wordCount: true,
+        seoTitle: true,
+        seoDescription: true,
+        status: true,
+        author: { select: { id: true, name: true, avatarUrl: true } },
+        category: { select: CATEGORY_SELECT },
+        tags: { select: { tag: { select: TAG_SELECT } } },
+        _count: { select: { comments: true } },
       },
     });
 
@@ -181,6 +294,43 @@ export class BlogsService {
     }
 
     return blog;
+  }
+
+  async getRelatedBlogs(slug: string) {
+    const blog = await this.prisma.blog.findUnique({
+      where: { slug },
+      select: { id: true, categoryId: true, status: true },
+    });
+
+    if (!blog || blog.status !== BlogStatus.PUBLISHED) {
+      throw new NotFoundException('Blog not found');
+    }
+
+    const where: Record<string, unknown> = {
+      status: BlogStatus.PUBLISHED,
+      NOT: { id: blog.id },
+    };
+
+    if (blog.categoryId) {
+      where.categoryId = blog.categoryId;
+    }
+
+    return this.prisma.blog.findMany({
+      where,
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        excerpt: true,
+        coverImage: true,
+        publishedAt: true,
+        readingTime: true,
+        author: { select: { id: true, name: true } },
+        category: { select: CATEGORY_SELECT },
+      },
+      orderBy: { publishedAt: 'desc' },
+      take: 3,
+    });
   }
 
   async listMyBlogs(user: RequestUser, query: BlogQueryDto) {
@@ -239,11 +389,13 @@ export class BlogsService {
       where: { id, authorId: user.id },
       select: {
         ...BLOG_DETAIL_SELECT,
-        content: true,
         reviews: {
           select: {
             decision: true,
             comment: true,
+            plagiarismScore: true,
+            plagiarismNote: true,
+            checklist: true,
             createdAt: true,
             editor: { select: { name: true } },
           },
@@ -256,9 +408,141 @@ export class BlogsService {
     return blog;
   }
 
+  // ── Phase 3: Review History ───────────────────────────────────────────────
+
+  async getBlogReviews(id: string, user: RequestUser, query: HistoryQueryDto) {
+    await this.assertBlogAccess(id, user);
+
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 20, 50);
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.blogReview.findMany({
+        where: { blogId: id },
+        select: {
+          id: true,
+          decision: true,
+          comment: true,
+          plagiarismScore: true,
+          plagiarismNote: true,
+          checklist: true,
+          createdAt: true,
+          editor: { select: USER_SAFE_SELECT },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blogReview.count({ where: { blogId: id } }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
+  // ── Phase 3: Version History ──────────────────────────────────────────────
+
+  async getBlogVersions(id: string, user: RequestUser, query: HistoryQueryDto) {
+    await this.assertBlogAccess(id, user);
+
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 20, 50);
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.blogVersion.findMany({
+        where: { blogId: id },
+        select: {
+          id: true,
+          versionNumber: true,
+          title: true,
+          content: true,
+          createdAt: true,
+          editedBy: { select: USER_SAFE_SELECT },
+        },
+        orderBy: { versionNumber: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blogVersion.count({ where: { blogId: id } }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
+  // ── Phase 3: Blog Timeline ────────────────────────────────────────────────
+
+  async getBlogTimeline(
+    id: string,
+    user: RequestUser,
+    query: TimelineQueryDto,
+  ) {
+    await this.assertBlogAccess(id, user);
+
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 50, 100);
+    const skip = (page - 1) * limit;
+
+    const where = { entityType: 'Blog', entityId: id };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.auditLog.findMany({
+        where,
+        select: {
+          id: true,
+          action: true,
+          metadata: true,
+          createdAt: true,
+          actor: { select: USER_SAFE_SELECT },
+        },
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private async assertBlogAccess(id: string, user: RequestUser) {
+    const blog = await this.prisma.blog.findUnique({
+      where: { id },
+      select: { id: true, authorId: true, assignedEditorId: true },
+    });
+    if (!blog) throw new NotFoundException('Blog not found');
+
+    if (user.role === Role.ADMIN) return blog;
+    if (blog.authorId === user.id) return blog;
+    if (blog.assignedEditorId === user.id) return blog;
+
+    throw new ForbiddenException('You do not have access to this blog');
+  }
+
   private async findBlogOrThrow(id: string) {
     const blog = await this.prisma.blog.findUnique({ where: { id } });
     if (!blog) throw new NotFoundException('Blog not found');
     return blog;
+  }
+
+  private async assertCategoryExists(categoryId: string) {
+    const cat = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+      select: { id: true },
+    });
+    if (!cat)
+      throw new BadRequestException(`Category not found: ${categoryId}`);
+  }
+
+  private async assertTagsExist(tagIds: string[]) {
+    const tags = await this.prisma.tag.findMany({
+      where: { id: { in: tagIds } },
+      select: { id: true },
+    });
+    if (tags.length !== tagIds.length) {
+      throw new BadRequestException('One or more tag IDs are invalid');
+    }
   }
 }

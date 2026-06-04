@@ -12,6 +12,7 @@ import { BlogsService } from './blogs.service';
 import { CreateBlogDto } from './dto/create-blog.dto';
 import { UpdateBlogDto } from './dto/update-blog.dto';
 import { BlogQueryDto } from './dto/blog-query.dto';
+import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -34,7 +35,10 @@ export class BlogsController {
   }
 
   @Get('me')
-  listMineAlias(@CurrentUser() user: RequestUser, @Query() query: BlogQueryDto) {
+  listMineAlias(
+    @CurrentUser() user: RequestUser,
+    @Query() query: BlogQueryDto,
+  ) {
     return this.blogsService.listMyBlogs(user, query);
   }
 
@@ -53,11 +57,50 @@ export class BlogsController {
     return this.blogsService.getMyBlog(id, user);
   }
 
+  // ── Phase 3: History endpoints (must be before /:slug) ───────────────────
+
+  @Get(':id/reviews')
+  getBlogReviews(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Query() query: HistoryQueryDto,
+  ) {
+    return this.blogsService.getBlogReviews(id, user, query);
+  }
+
+  @Get(':id/versions')
+  getBlogVersions(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Query() query: HistoryQueryDto,
+  ) {
+    return this.blogsService.getBlogVersions(id, user, query);
+  }
+
+  @Get(':id/timeline')
+  getBlogTimeline(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Query() query: TimelineQueryDto,
+  ) {
+    return this.blogsService.getBlogTimeline(id, user, query);
+  }
+
+  // ── Public slug endpoints (keep after specific routes) ───────────────────
+
+  @Public()
+  @Get(':slug/related')
+  getRelated(@Param('slug') slug: string) {
+    return this.blogsService.getRelatedBlogs(slug);
+  }
+
   @Public()
   @Get(':slug')
   getBySlug(@Param('slug') slug: string) {
     return this.blogsService.getPublishedBySlug(slug);
   }
+
+  // ── Write endpoints ───────────────────────────────────────────────────────
 
   @Roles(Role.USER, Role.AUTHOR, Role.EDITOR, Role.ADMIN)
   @Post()
