@@ -41,17 +41,43 @@ A production-ready RESTful API for a multi-user blogging platform. Built with Ne
 
 ```
 src/
-├── auth/          # JWT auth, guards, strategies, decorators
-├── users/         # User management, profile, role handling
-├── posts/         # Post CRUD, lifecycle, pagination, slug routing
-├── comments/      # Threaded comment system with nested replies
-├── tags/          # Tag CRUD, post associations
+├── common/        # Decorators, guards, filters, shared enum exports
+├── config/        # Application config
+├── database/      # Prisma module and service
+├── auth/          # Register, login, JWT strategy
+├── users/         # Profile and admin user management
+├── posts/         # Main blog draft/submission flow for authors
+├── editorial/     # Editor review workflow for main blogs
+├── freshers/      # Freshers Spot posts using the shared Post table
+├── comments/      # Direct-publish comments on published posts
+├── tags/          # Simple tag creation and post associations
 ├── uploads/       # Image upload endpoint
 ├── cloudinary/    # Cloudinary service wrapper
-├── common/        # Global exception filter
-├── prisma.service.ts
+├── admin/         # Dashboard and global management endpoints
 └── main.ts
 ```
+
+The backend is organized around feature modules with thin controllers and service-level business rules. `AppModule` imports only the database/config layer and feature modules.
+
+### Roles
+
+The platform supports `READER`, `AUTHOR`, `EDITOR`, `ADMIN`, and `FRESHER`. Public registration may choose normal non-admin roles where supported by the client, but it cannot create `ADMIN` users directly.
+
+### Post Lifecycle
+
+Main blog posts use `PostType.MAIN_BLOG` and move through:
+
+`DRAFT -> SUBMITTED -> UNDER_REVIEW -> PUBLISHED`
+
+Editors can also move reviewed posts to `NEEDS_CHANGES` or `REJECTED`, and admins can change status or archive posts. Authors can create drafts, edit only their own `DRAFT` or `NEEDS_CHANGES` posts, and submit them for review; they cannot publish main blogs directly.
+
+### Freshers Spot
+
+Freshers Spot uses the same `Post` table with `PostType.FRESHERS_SPOT`. Logged-in `FRESHER`, `AUTHOR`, `EDITOR`, or `ADMIN` users can create Freshers Spot posts, and they publish immediately with `PostStatus.PUBLISHED` and `publishedAt` set. Admins can archive Freshers Spot content.
+
+### Comments
+
+Logged-in users can comment on published posts. Comments publish directly without an approval queue. Users can delete their own comments, while admins can delete any comment.
 
 ---
 
@@ -286,11 +312,12 @@ Copy `.env.example` to `.env` and fill in your values:
 
 ```env
 # Database
-DATABASE_URL=postgresql://user:password@host:5432/theread
-DIRECT_URL=postgresql://user:password@host:5432/theread   # optional, for direct migrations
+DATABASE_URL=postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+DIRECT_URL=postgresql://postgres:PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require
 
 # Auth
-JWT_SECRET=your-super-secret-key-change-in-production
+JWT_ACCESS_SECRET=your-super-secret-key-change-in-production
+JWT_REFRESH_SECRET=another-super-secret-key-change-in-production
 JWT_EXPIRATION=7d
 
 # Server

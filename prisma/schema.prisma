@@ -1,10 +1,7 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client-js"
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
@@ -12,113 +9,142 @@ datasource db {
 }
 
 enum Role {
-  ADMIN
+  USER
   AUTHOR
-  READER
+  EDITOR
+  ADMIN
 }
 
-enum PostStatus {
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum BlogStatus {
   DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  REVISION_REQUESTED
+  APPROVED
+  REJECTED
   PUBLISHED
+  UNPUBLISHED
   ARCHIVED
 }
 
+enum ReviewDecision {
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+}
+
 model User {
-  id          String    @id @default(uuid())
-  name        String?
-  email       String    @unique
-  password    String
-  role        Role      @default(READER)
+  id           String     @id @default(uuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
 
-  posts       Post[]
-  comments    Comment[]
-  likes       PostLike[]
+  blogs         Blog[]        @relation("BlogAuthor")
+  assignedBlogs Blog[]        @relation("AssignedEditor")
+  reviews       BlogReview[]
+  versions      BlogVersion[]
+  auditLogs     AuditLog[]
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([email])
+  @@index([role])
+  @@index([status])
 }
 
-model Post {
-  id          String       @id @default(uuid())
-  slug        String       @unique
-  title       String
-  content     String
-  excerpt     String?
-  coverImage  String?
-  type        String?
-  viewCount   Int          @default(0)
+model Blog {
+  id         String  @id @default(uuid())
+  title      String
+  slug       String  @unique
+  excerpt    String?
+  content    String
+  coverImage String?
 
-  status      PostStatus   @default(DRAFT)
+  status BlogStatus @default(DRAFT)
 
-  authorId    String
-  author      User         @relation(fields: [authorId], references: [id])
+  authorId String
+  author   User   @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Restrict)
 
-  tags        PostTag[]
-  comments    Comment[]
-  likes       PostLike[]
+  assignedEditorId String?
+  assignedEditor   User?   @relation("AssignedEditor", fields: [assignedEditorId], references: [id], onDelete: SetNull)
 
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
   publishedAt DateTime?
 
-  @@index([authorId])
-  @@index([status])
-  @@index([createdAt])
+  reviews  BlogReview[]
+  versions BlogVersion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([slug])
-}
-
-model PostLike {
-  postId String
-  userId String
-
-  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@id([postId, userId])
-  @@index([postId])
-}
-
-model Tag {
-  id        String    @id @default(uuid())
-  name      String    @unique
-
-  posts     PostTag[]
-
-  createdAt DateTime  @default(now())
-}
-
-model PostTag {
-  postId String
-  tagId  String
-
-  post   Post @relation(fields: [postId], references: [id])
-  tag    Tag  @relation(fields: [tagId], references: [id])
-
-  @@id([postId, tagId])  // composite primary key
-}
-
-model Comment {
-  id        String   @id @default(uuid())
-  content   String
-
-  postId    String
-  post      Post     @relation(fields: [postId], references: [id])
-
-  authorId  String
-  author    User     @relation(fields: [authorId], references: [id])
-
-  // For future threaded comments (VERY IMPORTANT for scalability)
-  parentId  String?
-  parent    Comment? @relation("CommentToComment", fields: [parentId], references: [id])
-  replies   Comment[] @relation("CommentToComment")
-
-  createdAt DateTime @default(now())
-
-  @@index([postId])
+  @@index([status])
   @@index([authorId])
+  @@index([assignedEditorId])
+  @@index([publishedAt])
+  @@index([createdAt])
 }
 
+model BlogReview {
+  id String @id @default(uuid())
+
+  blogId String
+  blog   Blog   @relation(fields: [blogId], references: [id], onDelete: Cascade)
+
+  editorId String
+  editor   User   @relation(fields: [editorId], references: [id], onDelete: Restrict)
+
+  decision ReviewDecision
+  comment  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([blogId])
+  @@index([editorId])
+  @@index([decision])
+}
+
+model BlogVersion {
+  id String @id @default(uuid())
+
+  blogId String
+  blog   Blog   @relation(fields: [blogId], references: [id], onDelete: Cascade)
+
+  title         String
+  content       String
+  versionNumber Int
+
+  editedById String
+  editedBy   User   @relation(fields: [editedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@index([blogId])
+  @@index([editedById])
+}
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+}
