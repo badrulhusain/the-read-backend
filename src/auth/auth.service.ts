@@ -40,7 +40,12 @@ export class AuthService {
       select: USER_SELECT,
     });
 
-    const access_token = this.signToken(user.id, user.email, user.role);
+    const access_token = this.signToken(
+      user.id,
+      user.email,
+      user.role,
+      user.status,
+    );
     return { user, access_token };
   }
 
@@ -57,7 +62,12 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    const access_token = this.signToken(user.id, user.email, user.role);
+    const access_token = this.signToken(
+      user.id,
+      user.email,
+      user.role,
+      user.status,
+    );
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { passwordHash: _pw, ...safeUser } = user;
     return { user: safeUser, access_token };
@@ -70,7 +80,7 @@ export class AuthService {
     });
   }
 
-  private signToken(sub: string, email: string, role: string) {
-    return this.jwtService.sign({ sub, email, role });
+  private signToken(sub: string, email: string, role: string, status?: string) {
+    return this.jwtService.sign({ sub, email, role, status });
   }
 }

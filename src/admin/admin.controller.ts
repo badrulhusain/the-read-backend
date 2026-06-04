@@ -7,12 +7,16 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { Role } from '../generated/prisma/client';
+import { CommentStatus, Role } from '../generated/prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { AdminService } from './admin.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
-import { AdminUserQueryDto, AdminBlogQueryDto } from './dto/admin-query.dto';
+import {
+  AdminUserQueryDto,
+  AdminBlogQueryDto,
+  AdminCommentQueryDto,
+} from './dto/admin-query.dto';
 
 type RequestUser = { id: string; role: Role };
 
@@ -36,7 +40,7 @@ export class AdminController {
     return this.adminService.createAdmin(actor.id, dto);
   }
 
-  @Patch('users/:id/role')
+  @Patch('users/:id/promote-author')
   promoteToAuthor(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
     return this.adminService.promoteToAuthor(actor.id, id);
   }
@@ -69,5 +73,26 @@ export class AdminController {
   @Post('blogs/:id/unpublish')
   unpublishBlog(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
     return this.adminService.unpublishBlog(actor.id, id);
+  }
+
+  // Comment moderation (ADMIN only via class decorator; EDITOR can access via CommentsController)
+  @Get('comments')
+  listComments(@Query() query: AdminCommentQueryDto) {
+    return this.adminService.listComments(query);
+  }
+
+  @Patch('comments/:id/hide')
+  hideComment(@Param('id') id: string) {
+    return this.adminService.moderateComment(id, CommentStatus.HIDDEN);
+  }
+
+  @Patch('comments/:id/restore')
+  restoreComment(@Param('id') id: string) {
+    return this.adminService.moderateComment(id, CommentStatus.VISIBLE);
+  }
+
+  @Patch('comments/:id/delete')
+  deleteComment(@Param('id') id: string) {
+    return this.adminService.moderateComment(id, CommentStatus.DELETED);
   }
 }
