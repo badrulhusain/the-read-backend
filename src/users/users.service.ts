@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 export const USER_SAFE_SELECT = {
   id: true,
@@ -7,6 +8,8 @@ export const USER_SAFE_SELECT = {
   email: true,
   role: true,
   status: true,
+  avatarUrl: true,
+  avatarPublicId: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -24,5 +27,13 @@ export class UsersService {
 
   findByEmail(email: string) {
     return this.prisma.user.findUnique({ where: { email } });
+  }
+
+  updateMe(userId: string, dto: UpdateProfileDto) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: dto,
+      select: USER_SAFE_SELECT,
+    });
   }
 }
