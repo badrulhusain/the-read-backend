@@ -1,19 +1,40 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../database/prisma.service';
+import { UserStatus } from '../../generated/prisma/client';
+import { getJwtAccessSecret } from '../jwt-secret.util';
+
+interface JwtPayload {
+  sub: string;
+  email: string;
+  role: string;
+}
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'fallbackSecret',
+      secretOrKey: getJwtAccessSecret(configService),
     });
   }
 
-  async validate(payload: any) {
-    return { id: payload.sub, email: payload.email, role: payload.role };
+  async validate(payload: JwtPayload) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, email: true, role: true, status: true, name: true },
+    });
+
+    if (!user || user.status === UserStatus.BLOCKED) {
+      throw new UnauthorizedException('Access denied');
+    }
+
+    return user;
   }
 }
