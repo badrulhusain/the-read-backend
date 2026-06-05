@@ -297,6 +297,88 @@ export class AdminService {
     return updated;
   }
 
+  async deleteBlog(actorId: string, blogId: string) {
+    const blog = await this.prisma.blog.findUnique({
+      where: { id: blogId },
+      select: { id: true, title: true },
+    });
+    if (!blog) throw new NotFoundException('Blog not found');
+
+    await this.prisma.blog.delete({ where: { id: blogId } });
+
+    await this.audit.log({
+      actorId,
+      action: 'BLOG_DELETED',
+      entityType: 'Blog',
+      entityId: blogId,
+      metadata: { title: blog.title },
+    });
+
+    return { message: 'Blog deleted' };
+  }
+
+  async listCategories(query: AdminUserQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where = query.search
+      ? { name: { contains: query.search, mode: 'insensitive' as const } }
+      : {};
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.category.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { blogs: true } },
+        },
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.category.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
+  async listTags(query: AdminUserQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where = query.search
+      ? { name: { contains: query.search, mode: 'insensitive' as const } }
+      : {};
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.tag.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          isActive: true,
+          createdAt: true,
+          _count: { select: { blogs: true } },
+        },
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.tag.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
   async listComments(query: AdminCommentQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -348,6 +430,17 @@ export class AdminService {
         createdAt: true,
       },
     });
+  }
+
+  async deleteComment(id: string) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    await this.prisma.comment.delete({ where: { id } });
+    return { message: 'Comment deleted' };
   }
 
   private async findUserOrThrow(id: string) {

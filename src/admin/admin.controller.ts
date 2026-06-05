@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -75,7 +76,21 @@ export class AdminController {
     return this.adminService.unpublishBlog(actor.id, id);
   }
 
-  // Comment moderation (ADMIN only via class decorator; EDITOR can access via CommentsController)
+  @Delete('blogs/:id')
+  deleteBlog(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
+    return this.adminService.deleteBlog(actor.id, id);
+  }
+
+  @Get('categories')
+  listCategories(@Query() query: AdminUserQueryDto) {
+    return this.adminService.listCategories(query);
+  }
+
+  @Get('tags')
+  listTags(@Query() query: AdminUserQueryDto) {
+    return this.adminService.listTags(query);
+  }
+
   @Get('comments')
   listComments(@Query() query: AdminCommentQueryDto) {
     return this.adminService.listComments(query);
@@ -91,8 +106,8 @@ export class AdminController {
     return this.adminService.moderateComment(id, CommentStatus.VISIBLE);
   }
 
-  @Patch('comments/:id/delete')
+  @Delete('comments/:id')
   deleteComment(@Param('id') id: string) {
-    return this.adminService.moderateComment(id, CommentStatus.DELETED);
+    return this.adminService.deleteComment(id);
   }
 }
