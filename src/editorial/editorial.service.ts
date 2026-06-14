@@ -98,20 +98,27 @@ export class EditorialService {
   ) {}
 
   async getStats(user: RequestUser) {
-    const submittedBlogs = await this.prisma.blog.count({
-      where: { status: BlogStatus.SUBMITTED },
-    });
-    const underReviewByMe = await this.prisma.blog.count({
-      where: { status: BlogStatus.UNDER_REVIEW, assignedEditorId: user.id },
-    });
-    const approved = await this.prisma.blog.count({
-      where: { status: BlogStatus.APPROVED },
-    });
-    const rejectedOrRevisionRequested = await this.prisma.blog.count({
-      where: {
-        status: { in: [BlogStatus.REJECTED, BlogStatus.REVISION_REQUESTED] },
-      },
-    });
+    const [
+      submittedBlogs,
+      underReviewByMe,
+      approved,
+      rejectedOrRevisionRequested,
+    ] = await Promise.all([
+      this.prisma.blog.count({
+        where: { status: BlogStatus.SUBMITTED },
+      }),
+      this.prisma.blog.count({
+        where: { status: BlogStatus.UNDER_REVIEW, assignedEditorId: user.id },
+      }),
+      this.prisma.blog.count({
+        where: { status: BlogStatus.APPROVED },
+      }),
+      this.prisma.blog.count({
+        where: {
+          status: { in: [BlogStatus.REJECTED, BlogStatus.REVISION_REQUESTED] },
+        },
+      }),
+    ]);
 
     return {
       submittedBlogs,
@@ -146,14 +153,16 @@ export class EditorialService {
     const skip = (page - 1) * limit;
     const where = { status: BlogStatus.SUBMITTED };
 
-    const data = await this.prisma.blog.findMany({
-      where,
-      select: SUBMISSION_LIST_SELECT,
-      orderBy: { createdAt: 'asc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blog.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: SUBMISSION_LIST_SELECT,
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -171,14 +180,16 @@ export class EditorialService {
             ...(query.status ? { status: query.status } : {}),
           };
 
-    const data = await this.prisma.blog.findMany({
-      where,
-      select: SUBMISSION_LIST_SELECT,
-      orderBy: { updatedAt: 'desc' as const },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blog.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: SUBMISSION_LIST_SELECT,
+        orderBy: { updatedAt: 'desc' as const },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }

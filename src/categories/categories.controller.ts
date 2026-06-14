@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -13,6 +14,7 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { PUBLIC_TAXONOMY_CACHE } from '../common/constants/cache-control';
 
 @Controller('categories')
 export class CategoriesController {
@@ -20,6 +22,7 @@ export class CategoriesController {
 
   @Public()
   @Get()
+  @Header('Cache-Control', PUBLIC_TAXONOMY_CACHE)
   list() {
     return this.categoriesService.list();
   }
