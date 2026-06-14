@@ -52,16 +52,14 @@ export class CommentsService {
 
     const where = { blogId: blog.id, status: CommentStatus.VISIBLE };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.comment.findMany({
-        where,
-        select: COMMENT_SELECT,
-        orderBy: { createdAt: 'asc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.comment.count({ where }),
-    ]);
+    const data = await this.prisma.comment.findMany({
+      where,
+      select: COMMENT_SELECT,
+      orderBy: { createdAt: 'asc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.comment.count({ where });
 
     return paginate(data, total, page, limit);
   }

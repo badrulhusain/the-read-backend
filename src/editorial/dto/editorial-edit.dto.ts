@@ -1,11 +1,4 @@
-import {
-  IsOptional,
-  IsString,
-  IsUrl,
-  MaxLength,
-  MinLength,
-  ValidateIf,
-} from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class EditorialEditDto {
   @IsOptional()
@@ -23,9 +16,4 @@ export class EditorialEditDto {
   @IsString()
   @MaxLength(500)
   excerpt?: string;
-
-  @IsOptional()
-  @IsUrl()
-  @ValidateIf((o: EditorialEditDto) => !!o.coverImage)
-  coverImage?: string;
 }

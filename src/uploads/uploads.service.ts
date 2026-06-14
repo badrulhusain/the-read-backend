@@ -4,7 +4,7 @@ import {
   Injectable,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { UserStatus } from '../generated/prisma/client';
+import { Role, UserStatus } from '../generated/prisma/client';
 import { CloudinaryService } from './cloudinary.service';
 import { UploadType } from './dto/upload-image.dto';
 
@@ -15,7 +15,7 @@ const SIZE_LIMITS: Record<UploadType, number> = {
   [UploadType.PROFILE_IMAGE]: 2 * 1024 * 1024,
 };
 
-type RequestUser = { id: string; status?: UserStatus };
+type RequestUser = { id: string; role: Role; status?: UserStatus };
 
 @Injectable()
 export class UploadsService {
@@ -26,8 +26,21 @@ export class UploadsService {
     file: Express.Multer.File,
     uploadType: UploadType,
   ) {
-    if (user.status === UserStatus.BLOCKED) {
-      throw new ForbiddenException('Your account has been blocked');
+    if (
+      user.status === UserStatus.BLOCKED ||
+      user.status === UserStatus.DELETED
+    ) {
+      throw new ForbiddenException('Your account is not active');
+    }
+
+    if (
+      uploadType === UploadType.BLOG_COVER &&
+      user.role !== Role.EDITOR &&
+      user.role !== Role.ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only editors and admins can upload blog cover images',
+      );
     }
 
     if (!file) {

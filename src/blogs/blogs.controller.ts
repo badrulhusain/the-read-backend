@@ -12,6 +12,7 @@ import { BlogsService } from './blogs.service';
 import { CreateBlogDto } from './dto/create-blog.dto';
 import { UpdateBlogDto } from './dto/update-blog.dto';
 import { BlogQueryDto } from './dto/blog-query.dto';
+import { UpdateCoverImageDto } from './dto/cover-image.dto';
 import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
@@ -120,5 +121,27 @@ export class BlogsController {
   @Post(':id/submit')
   submit(@Param('id') id: string, @CurrentUser() user: RequestUser) {
     return this.blogsService.submit(id, user);
+  }
+
+  @Roles(Role.EDITOR, Role.ADMIN)
+  @Patch(':id/publish')
+  publish(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.blogsService.publish(id, user);
+  }
+
+  @Roles(Role.EDITOR, Role.ADMIN)
+  @Patch(':id/unpublish')
+  unpublish(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.blogsService.unpublish(id, user);
+  }
+
+  @Roles(Role.EDITOR, Role.ADMIN)
+  @Patch(':id/cover-image')
+  updateCoverImage(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Body() dto: UpdateCoverImageDto,
+  ) {
+    return this.blogsService.updateCoverImage(id, user, dto);
   }
 }

@@ -19,11 +19,13 @@ export function sanitizeBlogHtml(dirty: string): string {
       'code',
       'pre',
       'a',
+      'img',
       'br',
       'hr',
     ],
     allowedAttributes: {
       a: ['href', 'target', 'rel'],
+      img: ['src', 'alt', 'title', 'width', 'height'],
     },
     allowedSchemes: ['http', 'https', 'mailto'],
     transformTags: {
