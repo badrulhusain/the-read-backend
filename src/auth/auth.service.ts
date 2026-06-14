@@ -16,6 +16,8 @@ const USER_SELECT = {
   email: true,
   role: true,
   status: true,
+  isDeleted: true,
+  deletedAt: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -57,6 +59,9 @@ export class AuthService {
 
     if (user.status === UserStatus.BLOCKED) {
       throw new UnauthorizedException('Account has been blocked');
+    }
+    if (user.status === UserStatus.DELETED || user.isDeleted) {
+      throw new UnauthorizedException('Account has been deleted');
     }
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);

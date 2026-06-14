@@ -27,7 +27,7 @@ export class DashboardService {
       approved,
       published,
       rejected,
-    ] = await this.prisma.$transaction([
+    ] = await Promise.all([
       this.prisma.blog.count({
         where: { authorId: user.id, status: BlogStatus.DRAFT },
       }),
@@ -73,7 +73,7 @@ export class DashboardService {
   }
 
   async getEditorDashboard(user: RequestUser) {
-    const [submittedQueue, assignedToMe] = await this.prisma.$transaction([
+    const [submittedQueue, assignedToMe] = await Promise.all([
       this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
       this.prisma.blog.count({
         where: { assignedEditorId: user.id, status: BlogStatus.UNDER_REVIEW },
@@ -81,7 +81,7 @@ export class DashboardService {
     ]);
 
     const [approvedByMe, rejectedByMe, revisionRequestedByMe] =
-      await this.prisma.$transaction([
+      await Promise.all([
         this.prisma.blogReview.count({
           where: { editorId: user.id, decision: 'APPROVED' },
         }),
@@ -131,7 +131,7 @@ export class DashboardService {
       approved,
       published,
       rejected,
-    ] = await this.prisma.$transaction([
+    ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { role: Role.AUTHOR } }),
       this.prisma.user.count({ where: { role: Role.EDITOR } }),
@@ -173,15 +173,24 @@ export class DashboardService {
     return {
       stats: {
         users,
+        totalUsers: users,
         authors,
+        totalAuthors: authors,
         editors,
+        totalEditors: editors,
         admins,
+        totalAdmins: admins,
         totalBlogs,
         submitted,
+        submittedBlogs: submitted,
         underReview,
+        underReviewBlogs: underReview,
         approved,
+        approvedBlogs: approved,
         published,
+        publishedBlogs: published,
         rejected,
+        rejectedBlogs: rejected,
       },
       recentBlogs,
       recentActivity,

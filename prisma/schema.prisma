@@ -18,6 +18,7 @@ enum Role {
 enum UserStatus {
   ACTIVE
   BLOCKED
+  DELETED
 }
 
 enum BlogStatus {
@@ -52,6 +53,8 @@ model User {
   passwordHash String
   role         Role       @default(USER)
   status       UserStatus @default(ACTIVE)
+  isDeleted    Boolean    @default(false)
+  deletedAt    DateTime?
 
   avatarUrl      String?
   avatarPublicId String?
@@ -69,6 +72,7 @@ model User {
   @@index([email])
   @@index([role])
   @@index([status])
+  @@index([isDeleted])
 }
 
 model Blog {
@@ -79,6 +83,9 @@ model Blog {
   content    String
   coverImage         String?
   coverImagePublicId String?
+  coverImageAltText  String?
+  coverImageCrop     Json?
+  coverImageUploadedById String?
 
   status BlogStatus @default(DRAFT)
 

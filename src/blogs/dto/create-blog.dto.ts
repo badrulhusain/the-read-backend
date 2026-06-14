@@ -3,11 +3,12 @@ import {
   IsArray,
   IsOptional,
   IsString,
-  IsUUID,
-  IsUrl,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { CoverImageDto } from './cover-image.dto';
 
 export class CreateBlogDto {
   @IsString()
@@ -25,20 +26,17 @@ export class CreateBlogDto {
   content: string;
 
   @IsOptional()
-  @IsUrl()
-  coverImage?: string;
+  @ValidateNested()
+  @Type(() => CoverImageDto)
+  coverImage?: CoverImageDto | null;
 
   @IsOptional()
   @IsString()
-  coverImagePublicId?: string;
-
-  @IsOptional()
-  @IsUUID()
-  categoryId?: string;
+  categoryId?: string | null;
 
   @IsOptional()
   @IsArray()
-  @IsUUID('4', { each: true })
+  @IsString({ each: true })
   @ArrayMaxSize(5)
   tagIds?: string[];
 

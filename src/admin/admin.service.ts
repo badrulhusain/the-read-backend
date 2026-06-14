@@ -20,6 +20,8 @@ import {
   AdminCommentQueryDto,
 } from './dto/admin-query.dto';
 import { paginate } from '../common/utils/pagination.util';
+import { sanitizeBlogHtml } from '../common/utils/sanitize-blog-html';
+import { computeReadingStats } from '../common/utils/reading-time';
 
 const USER_SAFE_SELECT = {
   id: true,
@@ -27,6 +29,8 @@ const USER_SAFE_SELECT = {
   email: true,
   role: true,
   status: true,
+  isDeleted: true,
+  deletedAt: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -55,24 +59,53 @@ export class AdminService {
   async getStats() {
     const [
       totalUsers,
+      totalAuthors,
       totalEditors,
+      totalAdmins,
+      totalBlogs,
       submittedBlogs,
+      underReviewBlogs,
       approvedBlogs,
       publishedBlogs,
-    ] = await this.prisma.$transaction([
-      this.prisma.user.count(),
-      this.prisma.user.count({ where: { role: Role.EDITOR } }),
+      rejectedBlogs,
+    ] = await Promise.all([
+      this.prisma.user.count({ where: { isDeleted: false } }),
+      this.prisma.user.count({ where: { role: Role.AUTHOR, isDeleted: false } }),
+      this.prisma.user.count({ where: { role: Role.EDITOR, isDeleted: false } }),
+      this.prisma.user.count({ where: { role: Role.ADMIN, isDeleted: false } }),
+      this.prisma.blog.count(),
       this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
+      this.prisma.blog.count({ where: { status: BlogStatus.UNDER_REVIEW } }),
       this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
       this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
+      this.prisma.blog.count({ where: { status: BlogStatus.REJECTED } }),
     ]);
 
-    return {
+    const stats = {
+      users: totalUsers,
       totalUsers,
+      authors: totalAuthors,
+      totalAuthors,
+      editors: totalEditors,
       totalEditors,
+      admins: totalAdmins,
+      totalAdmins,
+      totalBlogs,
+      submitted: submittedBlogs,
       submittedBlogs,
+      underReview: underReviewBlogs,
+      underReviewBlogs,
+      approved: approvedBlogs,
       approvedBlogs,
+      published: publishedBlogs,
       publishedBlogs,
+      rejected: rejectedBlogs,
+      rejectedBlogs,
+    };
+
+    return {
+      ...stats,
+      stats,
     };
   }
 
@@ -143,6 +176,9 @@ export class AdminService {
     if (user.status === UserStatus.BLOCKED) {
       throw new BadRequestException('User is already blocked');
     }
+    if (user.status === UserStatus.DELETED || user.isDeleted) {
+      throw new BadRequestException('Deleted users cannot be blocked');
+    }
 
     const updated = await this.prisma.user.update({
       where: { id: userId },
@@ -165,6 +201,9 @@ export class AdminService {
 
     if (user.status === UserStatus.ACTIVE) {
       throw new BadRequestException('User is already active');
+    }
+    if (user.status === UserStatus.DELETED || user.isDeleted) {
+      throw new BadRequestException('Deleted users cannot be unblocked');
     }
 
     const updated = await this.prisma.user.update({
@@ -197,16 +236,14 @@ export class AdminService {
         }
       : {};
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.user.findMany({
-        where,
-        select: USER_SAFE_SELECT,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.user.count({ where }),
-    ]);
+    const data = await this.prisma.user.findMany({
+      where,
+      select: USER_SAFE_SELECT,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.user.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -224,16 +261,14 @@ export class AdminService {
         : {}),
     };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blog.findMany({
-        where,
-        select: BLOG_LIST_SELECT,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blog.count({ where }),
-    ]);
+    const data = await this.prisma.blog.findMany({
+      where,
+      select: BLOG_LIST_SELECT,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blog.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -245,13 +280,33 @@ export class AdminService {
     if (blog.status === BlogStatus.PUBLISHED) {
       throw new ConflictException('Blog is already published');
     }
-    if (blog.status !== BlogStatus.APPROVED) {
-      throw new BadRequestException('Only APPROVED blogs can be published');
+    const allowedStatuses: BlogStatus[] = [
+      BlogStatus.SUBMITTED,
+      BlogStatus.UNPUBLISHED,
+      BlogStatus.APPROVED,
+    ];
+
+    if (!allowedStatuses.includes(blog.status)) {
+      throw new BadRequestException(
+        'Only SUBMITTED, APPROVED, or UNPUBLISHED blogs can be published',
+      );
     }
+
+    const sanitized = sanitizeBlogHtml(blog.content);
+    if (!sanitized.trim()) {
+      throw new BadRequestException('Blog content is empty after sanitization');
+    }
+    const { wordCount, readingTime } = computeReadingStats(sanitized);
 
     const updated = await this.prisma.blog.update({
       where: { id: blogId },
-      data: { status: BlogStatus.PUBLISHED, publishedAt: new Date() },
+      data: {
+        content: sanitized,
+        status: BlogStatus.PUBLISHED,
+        publishedAt: new Date(),
+        wordCount,
+        readingTime,
+      },
       select: BLOG_LIST_SELECT,
     });
 
@@ -326,25 +381,23 @@ export class AdminService {
       ? { name: { contains: query.search, mode: 'insensitive' as const } }
       : {};
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.category.findMany({
-        where,
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          description: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-          _count: { select: { blogs: true } },
-        },
-        orderBy: { name: 'asc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.category.count({ where }),
-    ]);
+    const data = await this.prisma.category.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { blogs: true } },
+      },
+      orderBy: { name: 'asc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.category.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -358,23 +411,21 @@ export class AdminService {
       ? { name: { contains: query.search, mode: 'insensitive' as const } }
       : {};
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.tag.findMany({
-        where,
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          isActive: true,
-          createdAt: true,
-          _count: { select: { blogs: true } },
-        },
-        orderBy: { name: 'asc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.tag.count({ where }),
-    ]);
+    const data = await this.prisma.tag.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        createdAt: true,
+        _count: { select: { blogs: true } },
+      },
+      orderBy: { name: 'asc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.tag.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -390,25 +441,23 @@ export class AdminService {
       where.content = { contains: query.search, mode: 'insensitive' };
     }
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.comment.findMany({
-        where,
-        select: {
-          id: true,
-          content: true,
-          status: true,
-          parentId: true,
-          createdAt: true,
-          updatedAt: true,
-          user: { select: { id: true, name: true } },
-          blog: { select: { id: true, title: true, slug: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.comment.count({ where }),
-    ]);
+    const data = await this.prisma.comment.findMany({
+      where,
+      select: {
+        id: true,
+        content: true,
+        status: true,
+        parentId: true,
+        createdAt: true,
+        updatedAt: true,
+        user: { select: { id: true, name: true } },
+        blog: { select: { id: true, title: true, slug: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.comment.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -445,7 +494,9 @@ export class AdminService {
 
   private async findUserOrThrow(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('User not found');
+    if (!user || user.isDeleted || user.status === UserStatus.DELETED) {
+      throw new NotFoundException('User not found');
+    }
     return user;
   }
 }

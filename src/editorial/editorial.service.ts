@@ -55,6 +55,9 @@ const SUBMISSION_LIST_SELECT = {
   slug: true,
   excerpt: true,
   coverImage: true,
+  coverImageAltText: true,
+  coverImageCrop: true,
+  coverImageUploadedById: true,
   status: true,
   authorId: true,
   assignedEditorId: true,
@@ -70,6 +73,9 @@ const BLOG_SELECT = {
   excerpt: true,
   content: true,
   coverImage: true,
+  coverImageAltText: true,
+  coverImageCrop: true,
+  coverImageUploadedById: true,
   status: true,
   authorId: true,
   assignedEditorId: true,
@@ -92,23 +98,20 @@ export class EditorialService {
   ) {}
 
   async getStats(user: RequestUser) {
-    const [
-      submittedBlogs,
-      underReviewByMe,
-      approved,
-      rejectedOrRevisionRequested,
-    ] = await this.prisma.$transaction([
-      this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
-      this.prisma.blog.count({
-        where: { status: BlogStatus.UNDER_REVIEW, assignedEditorId: user.id },
-      }),
-      this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
-      this.prisma.blog.count({
-        where: {
-          status: { in: [BlogStatus.REJECTED, BlogStatus.REVISION_REQUESTED] },
-        },
-      }),
-    ]);
+    const submittedBlogs = await this.prisma.blog.count({
+      where: { status: BlogStatus.SUBMITTED },
+    });
+    const underReviewByMe = await this.prisma.blog.count({
+      where: { status: BlogStatus.UNDER_REVIEW, assignedEditorId: user.id },
+    });
+    const approved = await this.prisma.blog.count({
+      where: { status: BlogStatus.APPROVED },
+    });
+    const rejectedOrRevisionRequested = await this.prisma.blog.count({
+      where: {
+        status: { in: [BlogStatus.REJECTED, BlogStatus.REVISION_REQUESTED] },
+      },
+    });
 
     return {
       submittedBlogs,
@@ -143,16 +146,14 @@ export class EditorialService {
     const skip = (page - 1) * limit;
     const where = { status: BlogStatus.SUBMITTED };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blog.findMany({
-        where,
-        select: SUBMISSION_LIST_SELECT,
-        orderBy: { createdAt: 'asc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blog.count({ where }),
-    ]);
+    const data = await this.prisma.blog.findMany({
+      where,
+      select: SUBMISSION_LIST_SELECT,
+      orderBy: { createdAt: 'asc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blog.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -170,16 +171,14 @@ export class EditorialService {
             ...(query.status ? { status: query.status } : {}),
           };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blog.findMany({
-        where,
-        select: SUBMISSION_LIST_SELECT,
-        orderBy: { updatedAt: 'desc' as const },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blog.count({ where }),
-    ]);
+    const data = await this.prisma.blog.findMany({
+      where,
+      select: SUBMISSION_LIST_SELECT,
+      orderBy: { updatedAt: 'desc' as const },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blog.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -217,7 +216,7 @@ export class EditorialService {
   }
 
   async edit(id: string, user: RequestUser, dto: EditorialEditDto) {
-    const blog = await this.assertReviewer(id, user);
+    const blog = await this.assertEditorialEditAccess(id, user);
 
     const data: Record<string, unknown> = { ...dto };
 
@@ -448,6 +447,36 @@ export class EditorialService {
     if (user.role !== Role.ADMIN && blog.assignedEditorId !== user.id) {
       throw new ForbiddenException(
         'Only the assigned editor or admin can act on this blog',
+      );
+    }
+
+    return blog;
+  }
+
+  private async assertEditorialEditAccess(id: string, user: RequestUser) {
+    const blog = await this.prisma.blog.findUnique({ where: { id } });
+    if (!blog) throw new NotFoundException('Blog not found');
+
+    if (ALREADY_PROCESSED.includes(blog.status)) {
+      throw new ConflictException('Blog has already been processed');
+    }
+
+    const editableStatus =
+      blog.status === BlogStatus.SUBMITTED ||
+      blog.status === BlogStatus.UNDER_REVIEW;
+    if (!editableStatus) {
+      throw new BadRequestException(
+        'Blog must be SUBMITTED or UNDER_REVIEW to edit',
+      );
+    }
+
+    if (
+      user.role !== Role.ADMIN &&
+      blog.status === BlogStatus.UNDER_REVIEW &&
+      blog.assignedEditorId !== user.id
+    ) {
+      throw new ForbiddenException(
+        'Only the assigned editor or admin can edit this blog',
       );
     }
 

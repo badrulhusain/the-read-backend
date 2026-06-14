@@ -9,6 +9,7 @@ import { PrismaService } from '../database/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateBlogDto } from './dto/create-blog.dto';
 import { UpdateBlogDto } from './dto/update-blog.dto';
+import { CoverImageDto, UpdateCoverImageDto } from './dto/cover-image.dto';
 import { BlogQueryDto } from './dto/blog-query.dto';
 import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
 import { generateSlug, makeUniqueSlug } from '../common/utils/slug.util';
@@ -26,6 +27,9 @@ const BLOG_LIST_SELECT = {
   excerpt: true,
   coverImage: true,
   coverImagePublicId: true,
+  coverImageAltText: true,
+  coverImageCrop: true,
+  coverImageUploadedById: true,
   status: true,
   publishedAt: true,
   readingTime: true,
@@ -68,7 +72,9 @@ export class BlogsService {
   ) {}
 
   async create(user: RequestUser, dto: CreateBlogDto) {
-    const { tagIds, categoryId, content, ...rest } = dto;
+    this.assertCoverFieldsAllowed(user, dto);
+
+    const { tagIds, categoryId, content, coverImage, ...rest } = dto;
 
     const sanitized = sanitizeBlogHtml(content);
     if (!sanitized.trim()) {
@@ -96,6 +102,7 @@ export class BlogsService {
         wordCount,
         readingTime,
         categoryId: categoryId ?? null,
+        ...this.toCoverImageData(coverImage, user.id),
         ...(tagIds?.length
           ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } }
           : {}),
@@ -115,12 +122,17 @@ export class BlogsService {
 
   async update(id: string, user: RequestUser, dto: UpdateBlogDto) {
     const blog = await this.findBlogOrThrow(id);
+    this.assertCoverFieldsAllowed(user, dto);
 
     if (user.role === Role.ADMIN) {
       // Admin can edit any blog
     } else if (user.role === Role.EDITOR) {
-      if (blog.assignedEditorId !== user.id) {
-        throw new ForbiddenException('You are not assigned to this blog');
+      const canEditSubmitted = blog.status === BlogStatus.SUBMITTED;
+      const canEditAssigned = blog.assignedEditorId === user.id;
+      if (!canEditSubmitted && !canEditAssigned) {
+        throw new ForbiddenException(
+          'You can only edit submitted or assigned blogs',
+        );
       }
     } else {
       if (blog.authorId !== user.id) {
@@ -133,9 +145,13 @@ export class BlogsService {
       }
     }
 
-    const { tagIds, categoryId, content, title, ...rest } = dto;
+    const { tagIds, categoryId, content, title, coverImage, ...rest } = dto;
 
     const data: Record<string, unknown> = { ...rest };
+
+    if (coverImage !== undefined) {
+      Object.assign(data, this.toCoverImageData(coverImage, user.id));
+    }
 
     if (content !== undefined) {
       const sanitized = sanitizeBlogHtml(content);
@@ -251,16 +267,14 @@ export class BlogsService {
       where.tags = { some: { tag: { slug: query.tag } } };
     }
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blog.findMany({
-        where,
-        select: BLOG_LIST_SELECT,
-        orderBy: { publishedAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blog.count({ where }),
-    ]);
+    const data = await this.prisma.blog.findMany({
+      where,
+      select: BLOG_LIST_SELECT,
+      orderBy: { publishedAt: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blog.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -276,6 +290,9 @@ export class BlogsService {
         content: true,
         coverImage: true,
         coverImagePublicId: true,
+        coverImageAltText: true,
+        coverImageCrop: true,
+        coverImageUploadedById: true,
         publishedAt: true,
         readingTime: true,
         wordCount: true,
@@ -323,6 +340,9 @@ export class BlogsService {
         slug: true,
         excerpt: true,
         coverImage: true,
+        coverImageAltText: true,
+        coverImageCrop: true,
+        coverImageUploadedById: true,
         publishedAt: true,
         readingTime: true,
         author: { select: { id: true, name: true } },
@@ -340,16 +360,14 @@ export class BlogsService {
 
     const where = { authorId: user.id };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blog.findMany({
-        where,
-        select: BLOG_LIST_SELECT,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blog.count({ where }),
-    ]);
+    const data = await this.prisma.blog.findMany({
+      where,
+      select: BLOG_LIST_SELECT,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blog.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -408,6 +426,101 @@ export class BlogsService {
     return blog;
   }
 
+  async publish(id: string, user: RequestUser) {
+    const blog = await this.findBlogOrThrow(id);
+    const allowedStatuses: BlogStatus[] = [
+      BlogStatus.SUBMITTED,
+      BlogStatus.UNPUBLISHED,
+    ];
+
+    if (!allowedStatuses.includes(blog.status)) {
+      throw new BadRequestException(
+        'Only SUBMITTED or UNPUBLISHED blogs can be published',
+      );
+    }
+
+    const sanitized = sanitizeBlogHtml(blog.content);
+    if (!sanitized.trim()) {
+      throw new BadRequestException('Blog content is empty after sanitization');
+    }
+    const { wordCount, readingTime } = computeReadingStats(sanitized);
+
+    const updated = await this.prisma.blog.update({
+      where: { id },
+      data: {
+        content: sanitized,
+        status: BlogStatus.PUBLISHED,
+        publishedAt: new Date(),
+        wordCount,
+        readingTime,
+      },
+      select: BLOG_DETAIL_SELECT,
+    });
+
+    await this.audit.log({
+      actorId: user.id,
+      action: 'BLOG_PUBLISHED',
+      entityType: 'Blog',
+      entityId: id,
+      metadata: {
+        oldStatus: blog.status,
+        newStatus: BlogStatus.PUBLISHED,
+      },
+    });
+
+    return updated;
+  }
+
+  async unpublish(id: string, user: RequestUser) {
+    const blog = await this.findBlogOrThrow(id);
+
+    if (blog.status !== BlogStatus.PUBLISHED) {
+      throw new BadRequestException('Only PUBLISHED blogs can be unpublished');
+    }
+
+    const updated = await this.prisma.blog.update({
+      where: { id },
+      data: { status: BlogStatus.UNPUBLISHED },
+      select: BLOG_DETAIL_SELECT,
+    });
+
+    await this.audit.log({
+      actorId: user.id,
+      action: 'BLOG_UNPUBLISHED',
+      entityType: 'Blog',
+      entityId: id,
+      metadata: {
+        oldStatus: blog.status,
+        newStatus: BlogStatus.UNPUBLISHED,
+      },
+    });
+
+    return updated;
+  }
+
+  async updateCoverImage(
+    id: string,
+    user: RequestUser,
+    dto: UpdateCoverImageDto,
+  ) {
+    await this.findBlogOrThrow(id);
+
+    const updated = await this.prisma.blog.update({
+      where: { id },
+      data: this.toCoverImageData(dto.coverImage, user.id),
+      select: BLOG_DETAIL_SELECT,
+    });
+
+    await this.audit.log({
+      actorId: user.id,
+      action: 'BLOG_COVER_IMAGE_UPDATED',
+      entityType: 'Blog',
+      entityId: id,
+    });
+
+    return updated;
+  }
+
   // ── Phase 3: Review History ───────────────────────────────────────────────
 
   async getBlogReviews(id: string, user: RequestUser, query: HistoryQueryDto) {
@@ -417,25 +530,24 @@ export class BlogsService {
     const limit = Math.min(query.limit ?? 20, 50);
     const skip = (page - 1) * limit;
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blogReview.findMany({
-        where: { blogId: id },
-        select: {
-          id: true,
-          decision: true,
-          comment: true,
-          plagiarismScore: true,
-          plagiarismNote: true,
-          checklist: true,
-          createdAt: true,
-          editor: { select: USER_SAFE_SELECT },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blogReview.count({ where: { blogId: id } }),
-    ]);
+    const where = { blogId: id };
+    const data = await this.prisma.blogReview.findMany({
+      where,
+      select: {
+        id: true,
+        decision: true,
+        comment: true,
+        plagiarismScore: true,
+        plagiarismNote: true,
+        checklist: true,
+        createdAt: true,
+        editor: { select: USER_SAFE_SELECT },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blogReview.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -449,23 +561,22 @@ export class BlogsService {
     const limit = Math.min(query.limit ?? 20, 50);
     const skip = (page - 1) * limit;
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.blogVersion.findMany({
-        where: { blogId: id },
-        select: {
-          id: true,
-          versionNumber: true,
-          title: true,
-          content: true,
-          createdAt: true,
-          editedBy: { select: USER_SAFE_SELECT },
-        },
-        orderBy: { versionNumber: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.blogVersion.count({ where: { blogId: id } }),
-    ]);
+    const where = { blogId: id };
+    const data = await this.prisma.blogVersion.findMany({
+      where,
+      select: {
+        id: true,
+        versionNumber: true,
+        title: true,
+        content: true,
+        createdAt: true,
+        editedBy: { select: USER_SAFE_SELECT },
+      },
+      orderBy: { versionNumber: 'desc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.blogVersion.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -485,22 +596,20 @@ export class BlogsService {
 
     const where = { entityType: 'Blog', entityId: id };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.auditLog.findMany({
-        where,
-        select: {
-          id: true,
-          action: true,
-          metadata: true,
-          createdAt: true,
-          actor: { select: USER_SAFE_SELECT },
-        },
-        orderBy: { createdAt: 'asc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.auditLog.count({ where }),
-    ]);
+    const data = await this.prisma.auditLog.findMany({
+      where,
+      select: {
+        id: true,
+        action: true,
+        metadata: true,
+        createdAt: true,
+        actor: { select: USER_SAFE_SELECT },
+      },
+      orderBy: { createdAt: 'asc' },
+      skip,
+      take: limit,
+    });
+    const total = await this.prisma.auditLog.count({ where });
 
     return paginate(data, total, page, limit);
   }
@@ -525,6 +634,79 @@ export class BlogsService {
     const blog = await this.prisma.blog.findUnique({ where: { id } });
     if (!blog) throw new NotFoundException('Blog not found');
     return blog;
+  }
+
+  private assertCoverFieldsAllowed(
+    user: RequestUser,
+    dto: Partial<CreateBlogDto>,
+  ) {
+    const includesCoverChange = dto.coverImage !== undefined;
+
+    if (
+      includesCoverChange &&
+      user.role !== Role.EDITOR &&
+      user.role !== Role.ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only editors and admins can manage cover images',
+      );
+    }
+  }
+
+  private toCoverImageData(
+    coverImage: CoverImageDto | null | undefined,
+    uploadedBy: string,
+  ): Record<string, unknown> {
+    if (coverImage === undefined) return {};
+
+    if (coverImage === null) {
+      return {
+        coverImage: null,
+        coverImagePublicId: null,
+        coverImageAltText: null,
+        coverImageCrop: null,
+        coverImageUploadedById: null,
+      };
+    }
+
+    const hasUrl = coverImage.url !== undefined;
+
+    return {
+      ...(hasUrl ? { coverImage: coverImage.url } : {}),
+      ...(coverImage.publicId !== undefined
+        ? { coverImagePublicId: coverImage.publicId }
+        : {}),
+      ...(coverImage.altText !== undefined
+        ? { coverImageAltText: coverImage.altText }
+        : {}),
+      ...(coverImage.crop !== undefined
+        ? {
+            coverImageCrop:
+              coverImage.crop === null
+                ? null
+                : {
+                    ...(coverImage.crop.x !== undefined
+                      ? { x: coverImage.crop.x }
+                      : {}),
+                    ...(coverImage.crop.y !== undefined
+                      ? { y: coverImage.crop.y }
+                      : {}),
+                    ...(coverImage.crop.width !== undefined
+                      ? { width: coverImage.crop.width }
+                      : {}),
+                    ...(coverImage.crop.height !== undefined
+                      ? { height: coverImage.crop.height }
+                      : {}),
+                    ...(coverImage.crop.zoom !== undefined
+                      ? { zoom: coverImage.crop.zoom }
+                      : {}),
+                  },
+          }
+        : {}),
+      ...(hasUrl
+        ? { coverImageUploadedById: coverImage.url ? uploadedBy : null }
+        : {}),
+    };
   }
 
   private async assertCategoryExists(categoryId: string) {

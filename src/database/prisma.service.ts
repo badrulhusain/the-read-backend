@@ -16,6 +16,10 @@ export class PrismaService
 
     super({
       adapter: new PrismaPg({ connectionString }),
+      transactionOptions: {
+        maxWait: 10000,
+        timeout: 15000,
+      },
     });
   }
 
