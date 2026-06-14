@@ -267,14 +267,16 @@ export class BlogsService {
       where.tags = { some: { tag: { slug: query.tag } } };
     }
 
-    const data = await this.prisma.blog.findMany({
-      where,
-      select: BLOG_LIST_SELECT,
-      orderBy: { publishedAt: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blog.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: BLOG_LIST_SELECT,
+        orderBy: { publishedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -360,14 +362,16 @@ export class BlogsService {
 
     const where = { authorId: user.id };
 
-    const data = await this.prisma.blog.findMany({
-      where,
-      select: BLOG_LIST_SELECT,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blog.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: BLOG_LIST_SELECT,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -531,23 +535,25 @@ export class BlogsService {
     const skip = (page - 1) * limit;
 
     const where = { blogId: id };
-    const data = await this.prisma.blogReview.findMany({
-      where,
-      select: {
-        id: true,
-        decision: true,
-        comment: true,
-        plagiarismScore: true,
-        plagiarismNote: true,
-        checklist: true,
-        createdAt: true,
-        editor: { select: USER_SAFE_SELECT },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blogReview.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blogReview.findMany({
+        where,
+        select: {
+          id: true,
+          decision: true,
+          comment: true,
+          plagiarismScore: true,
+          plagiarismNote: true,
+          checklist: true,
+          createdAt: true,
+          editor: { select: USER_SAFE_SELECT },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blogReview.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -562,21 +568,23 @@ export class BlogsService {
     const skip = (page - 1) * limit;
 
     const where = { blogId: id };
-    const data = await this.prisma.blogVersion.findMany({
-      where,
-      select: {
-        id: true,
-        versionNumber: true,
-        title: true,
-        content: true,
-        createdAt: true,
-        editedBy: { select: USER_SAFE_SELECT },
-      },
-      orderBy: { versionNumber: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blogVersion.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blogVersion.findMany({
+        where,
+        select: {
+          id: true,
+          versionNumber: true,
+          title: true,
+          content: true,
+          createdAt: true,
+          editedBy: { select: USER_SAFE_SELECT },
+        },
+        orderBy: { versionNumber: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blogVersion.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -596,20 +604,22 @@ export class BlogsService {
 
     const where = { entityType: 'Blog', entityId: id };
 
-    const data = await this.prisma.auditLog.findMany({
-      where,
-      select: {
-        id: true,
-        action: true,
-        metadata: true,
-        createdAt: true,
-        actor: { select: USER_SAFE_SELECT },
-      },
-      orderBy: { createdAt: 'asc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.auditLog.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        select: {
+          id: true,
+          action: true,
+          metadata: true,
+          createdAt: true,
+          actor: { select: USER_SAFE_SELECT },
+        },
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }

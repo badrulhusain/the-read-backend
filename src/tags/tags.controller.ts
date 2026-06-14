@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -13,6 +14,7 @@ import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { PUBLIC_TAXONOMY_CACHE } from '../common/constants/cache-control';
 
 @Controller('tags')
 export class TagsController {
@@ -20,6 +22,7 @@ export class TagsController {
 
   @Public()
   @Get()
+  @Header('Cache-Control', PUBLIC_TAXONOMY_CACHE)
   list() {
     return this.tagsService.list();
   }

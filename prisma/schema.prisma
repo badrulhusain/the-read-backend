@@ -76,15 +76,15 @@ model User {
 }
 
 model Blog {
-  id         String  @id @default(uuid())
-  title      String
-  slug       String  @unique
-  excerpt    String?
-  content    String
-  coverImage         String?
-  coverImagePublicId String?
-  coverImageAltText  String?
-  coverImageCrop     Json?
+  id                     String  @id @default(uuid())
+  title                  String
+  slug                   String  @unique
+  excerpt                String?
+  content                String
+  coverImage             String?
+  coverImagePublicId     String?
+  coverImageAltText      String?
+  coverImageCrop         Json?
   coverImageUploadedById String?
 
   status BlogStatus @default(DRAFT)
@@ -121,6 +121,13 @@ model Blog {
   @@index([categoryId])
   @@index([publishedAt])
   @@index([createdAt])
+  @@index([status, publishedAt])
+  @@index([status, createdAt])
+  @@index([status, updatedAt])
+  @@index([authorId, createdAt])
+  @@index([authorId, updatedAt])
+  @@index([assignedEditorId, status, updatedAt])
+  @@index([categoryId, status, publishedAt])
 }
 
 model Category {
@@ -182,6 +189,8 @@ model BlogReview {
   @@index([blogId])
   @@index([editorId])
   @@index([decision])
+  @@index([blogId, createdAt])
+  @@index([editorId, decision])
 }
 
 model BlogVersion {
@@ -201,6 +210,7 @@ model BlogVersion {
 
   @@index([blogId])
   @@index([editedById])
+  @@index([blogId, versionNumber])
 }
 
 model Comment {
@@ -221,6 +231,7 @@ model Comment {
   @@index([status])
   @@index([createdAt])
   @@index([parentId])
+  @@index([blogId, status, createdAt])
 }
 
 model AuditLog {
@@ -240,4 +251,5 @@ model AuditLog {
   @@index([action])
   @@index([entityType])
   @@index([createdAt])
+  @@index([entityType, entityId, createdAt])
 }

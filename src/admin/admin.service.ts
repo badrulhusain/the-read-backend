@@ -57,29 +57,107 @@ export class AdminService {
   ) {}
 
   async getStats() {
-    const [
-      totalUsers,
-      totalAuthors,
-      totalEditors,
-      totalAdmins,
-      totalBlogs,
-      submittedBlogs,
-      underReviewBlogs,
-      approvedBlogs,
-      publishedBlogs,
-      rejectedBlogs,
-    ] = await Promise.all([
-      this.prisma.user.count({ where: { isDeleted: false } }),
-      this.prisma.user.count({ where: { role: Role.AUTHOR, isDeleted: false } }),
-      this.prisma.user.count({ where: { role: Role.EDITOR, isDeleted: false } }),
-      this.prisma.user.count({ where: { role: Role.ADMIN, isDeleted: false } }),
-      this.prisma.blog.count(),
-      this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
-      this.prisma.blog.count({ where: { status: BlogStatus.UNDER_REVIEW } }),
-      this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
-      this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
-      this.prisma.blog.count({ where: { status: BlogStatus.REJECTED } }),
+    if (!this.prisma.user.groupBy || !this.prisma.blog.groupBy) {
+      const [
+        totalUsers,
+        totalAuthors,
+        totalEditors,
+        totalAdmins,
+        totalBlogs,
+        submittedBlogs,
+        underReviewBlogs,
+        approvedBlogs,
+        publishedBlogs,
+        rejectedBlogs,
+      ] = await Promise.all([
+        this.prisma.user.count({ where: { isDeleted: false } }),
+        this.prisma.user.count({
+          where: { role: Role.AUTHOR, isDeleted: false },
+        }),
+        this.prisma.user.count({
+          where: { role: Role.EDITOR, isDeleted: false },
+        }),
+        this.prisma.user.count({
+          where: { role: Role.ADMIN, isDeleted: false },
+        }),
+        this.prisma.blog.count(),
+        this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.UNDER_REVIEW } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.REJECTED } }),
+      ]);
+
+      const stats = {
+        users: totalUsers,
+        totalUsers,
+        authors: totalAuthors,
+        totalAuthors,
+        editors: totalEditors,
+        totalEditors,
+        admins: totalAdmins,
+        totalAdmins,
+        totalBlogs,
+        submitted: submittedBlogs,
+        submittedBlogs,
+        underReview: underReviewBlogs,
+        underReviewBlogs,
+        approved: approvedBlogs,
+        approvedBlogs,
+        published: publishedBlogs,
+        publishedBlogs,
+        rejected: rejectedBlogs,
+        rejectedBlogs,
+      };
+
+      return {
+        ...stats,
+        stats,
+      };
+    }
+
+    const [userGroups, blogGroups] = await Promise.all([
+      this.prisma.user.groupBy({
+        by: ['role'],
+        where: { isDeleted: false },
+        _count: { _all: true },
+      }),
+      this.prisma.blog.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
     ]);
+
+    const usersByRole = Object.fromEntries(
+      Object.values(Role).map((role) => [role, 0]),
+    ) as Record<Role, number>;
+    const blogsByStatus = Object.fromEntries(
+      Object.values(BlogStatus).map((status) => [status, 0]),
+    ) as Record<BlogStatus, number>;
+
+    for (const item of userGroups) {
+      usersByRole[item.role] = item._count._all;
+    }
+    for (const item of blogGroups) {
+      blogsByStatus[item.status] = item._count._all;
+    }
+
+    const totalUsers = Object.values(usersByRole).reduce(
+      (sum, count) => sum + count,
+      0,
+    );
+    const totalBlogs = Object.values(blogsByStatus).reduce(
+      (sum, count) => sum + count,
+      0,
+    );
+    const totalAuthors = usersByRole.AUTHOR;
+    const totalEditors = usersByRole.EDITOR;
+    const totalAdmins = usersByRole.ADMIN;
+    const submittedBlogs = blogsByStatus.SUBMITTED;
+    const underReviewBlogs = blogsByStatus.UNDER_REVIEW;
+    const approvedBlogs = blogsByStatus.APPROVED;
+    const publishedBlogs = blogsByStatus.PUBLISHED;
+    const rejectedBlogs = blogsByStatus.REJECTED;
 
     const stats = {
       users: totalUsers,
@@ -236,14 +314,16 @@ export class AdminService {
         }
       : {};
 
-    const data = await this.prisma.user.findMany({
-      where,
-      select: USER_SAFE_SELECT,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.user.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: USER_SAFE_SELECT,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -261,14 +341,16 @@ export class AdminService {
         : {}),
     };
 
-    const data = await this.prisma.blog.findMany({
-      where,
-      select: BLOG_LIST_SELECT,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.blog.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: BLOG_LIST_SELECT,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -381,23 +463,25 @@ export class AdminService {
       ? { name: { contains: query.search, mode: 'insensitive' as const } }
       : {};
 
-    const data = await this.prisma.category.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        description: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: { select: { blogs: true } },
-      },
-      orderBy: { name: 'asc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.category.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.category.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { blogs: true } },
+        },
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.category.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -411,21 +495,23 @@ export class AdminService {
       ? { name: { contains: query.search, mode: 'insensitive' as const } }
       : {};
 
-    const data = await this.prisma.tag.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        isActive: true,
-        createdAt: true,
-        _count: { select: { blogs: true } },
-      },
-      orderBy: { name: 'asc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.tag.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.tag.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          isActive: true,
+          createdAt: true,
+          _count: { select: { blogs: true } },
+        },
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.tag.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }
@@ -441,23 +527,25 @@ export class AdminService {
       where.content = { contains: query.search, mode: 'insensitive' };
     }
 
-    const data = await this.prisma.comment.findMany({
-      where,
-      select: {
-        id: true,
-        content: true,
-        status: true,
-        parentId: true,
-        createdAt: true,
-        updatedAt: true,
-        user: { select: { id: true, name: true } },
-        blog: { select: { id: true, title: true, slug: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-    const total = await this.prisma.comment.count({ where });
+    const [data, total] = await Promise.all([
+      this.prisma.comment.findMany({
+        where,
+        select: {
+          id: true,
+          content: true,
+          status: true,
+          parentId: true,
+          createdAt: true,
+          updatedAt: true,
+          user: { select: { id: true, name: true } },
+          blog: { select: { id: true, title: true, slug: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.comment.count({ where }),
+    ]);
 
     return paginate(data, total, page, limit);
   }

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -17,6 +18,7 @@ import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { PUBLIC_CONTENT_CACHE } from '../common/constants/cache-control';
 
 type RequestUser = { id: string; role: Role };
 
@@ -26,6 +28,7 @@ export class BlogsController {
 
   @Public()
   @Get()
+  @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
   listPublished(@Query() query: BlogQueryDto) {
     return this.blogsService.listPublished(query);
   }
@@ -91,12 +94,14 @@ export class BlogsController {
 
   @Public()
   @Get(':slug/related')
+  @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
   getRelated(@Param('slug') slug: string) {
     return this.blogsService.getRelatedBlogs(slug);
   }
 
   @Public()
   @Get(':slug')
+  @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
   getBySlug(@Param('slug') slug: string) {
     return this.blogsService.getPublishedBySlug(slug);
   }

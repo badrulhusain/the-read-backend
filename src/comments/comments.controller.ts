@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -15,6 +16,7 @@ import { CommentQueryDto } from './dto/comment-query.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { PUBLIC_COMMENTS_CACHE } from '../common/constants/cache-control';
 
 type RequestUser = { id: string; role: Role; status?: UserStatus };
 
@@ -25,6 +27,7 @@ export class CommentsController {
   // Public: list visible comments for a published blog
   @Public()
   @Get('blogs/:slug/comments')
+  @Header('Cache-Control', PUBLIC_COMMENTS_CACHE)
   listForBlog(@Param('slug') slug: string, @Query() query: CommentQueryDto) {
     return this.commentsService.listForBlog(slug, query);
   }
