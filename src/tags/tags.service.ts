@@ -50,8 +50,12 @@ export class TagsService {
     if (conflict) throw new ConflictException('Tag name already exists');
 
     return this.prisma.tag.create({
-      data: { name: dto.name, slug },
-      select: PUBLIC_SELECT,
+      data: {
+        name: dto.name,
+        slug,
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+      select: { ...PUBLIC_SELECT, isActive: true },
     });
   }
 

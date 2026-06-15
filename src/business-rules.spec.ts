@@ -10,6 +10,8 @@ import { RegisterDto } from './auth/dto/register.dto';
 import { BlogsService } from './blogs/blogs.service';
 import { UpdateBlogDto } from './blogs/dto/update-blog.dto';
 import { UpdateCoverImageDto } from './blogs/dto/cover-image.dto';
+import { CreateCategoryDto } from './categories/dto/create-category.dto';
+import { CreateTagDto } from './tags/dto/create-tag.dto';
 import { DashboardService } from './dashboard/dashboard.service';
 import { UsersService } from './users/users.service';
 import { BlogStatus, Role, UserStatus } from './generated/prisma/client';
@@ -38,6 +40,37 @@ describe('business rules', () => {
     it('accepts 6-character passwords without composition rules', async () => {
       const errors = await validatePassword('abcdef');
       expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('taxonomy create DTO validation', () => {
+    const validationPipe = new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: false },
+    });
+
+    it('accepts isActive when creating a category from the admin UI', async () => {
+      await expect(
+        validationPipe.transform(
+          {
+            name: 'Culture',
+            description: 'Books and essays',
+            isActive: true,
+          },
+          { type: 'body', metatype: CreateCategoryDto } as any,
+        ),
+      ).resolves.toMatchObject({ name: 'Culture', isActive: true });
+    });
+
+    it('accepts isActive when creating a tag from the admin UI', async () => {
+      await expect(
+        validationPipe.transform(
+          { name: 'Longform', isActive: true },
+          { type: 'body', metatype: CreateTagDto } as any,
+        ),
+      ).resolves.toMatchObject({ name: 'Longform', isActive: true });
     });
   });
 

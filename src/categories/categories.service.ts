@@ -58,8 +58,13 @@ export class CategoriesService {
     if (existing) throw new ConflictException('Category name already exists');
 
     return this.prisma.category.create({
-      data: { name: dto.name, slug, description: dto.description ?? null },
-      select: PUBLIC_SELECT,
+      data: {
+        name: dto.name,
+        slug,
+        description: dto.description ?? null,
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+      select: { ...PUBLIC_SELECT, isActive: true },
     });
   }
 
