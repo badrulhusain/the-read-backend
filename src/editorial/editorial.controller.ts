@@ -10,6 +10,7 @@ import {
 import { Role } from '../generated/prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { BlogsService } from '../blogs/blogs.service';
 import { EditorialEditDto } from './dto/editorial-edit.dto';
 import {
   ApproveBlogDto,
@@ -27,7 +28,10 @@ type RequestUser = { id: string; role: Role };
 @Roles(Role.EDITOR, Role.ADMIN)
 @Controller('editorial')
 export class EditorialController {
-  constructor(private readonly editorialService: EditorialService) {}
+  constructor(
+    private readonly editorialService: EditorialService,
+    private readonly blogsService: BlogsService,
+  ) {}
 
   @Get('stats')
   getStats(@CurrentUser() user: RequestUser) {
@@ -41,6 +45,22 @@ export class EditorialController {
 
   @Get('blogs')
   listBlogs(
+    @Query() query: EditorialBlogQueryDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.editorialService.listBlogs(query, user);
+  }
+
+  @Get('my-reviews')
+  listMyReviews(
+    @Query() query: EditorialBlogQueryDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.editorialService.listBlogs(query, user);
+  }
+
+  @Get('reviews')
+  listReviews(
     @Query() query: EditorialBlogQueryDto,
     @CurrentUser() user: RequestUser,
   ) {
@@ -91,5 +111,15 @@ export class EditorialController {
     @Body() dto: RequestRevisionDto,
   ) {
     return this.editorialService.requestRevision(id, user, dto);
+  }
+
+  @Post('blogs/:id/publish')
+  publish(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.blogsService.publish(id, user);
+  }
+
+  @Post('blogs/:id/unpublish')
+  unpublish(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.blogsService.unpublish(id, user);
   }
 }

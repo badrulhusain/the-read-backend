@@ -11,6 +11,7 @@ import {
 import { CommentStatus, Role } from '../generated/prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UsersService } from '../users/users.service';
 import { AdminService } from './admin.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import {
@@ -24,7 +25,10 @@ type RequestUser = { id: string; role: Role };
 @Roles(Role.ADMIN)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly usersService: UsersService,
+  ) {}
 
   @Get('stats')
   getStats() {
@@ -54,6 +58,11 @@ export class AdminController {
   @Patch('users/:id/unblock')
   unblockUser(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
     return this.adminService.unblockUser(actor.id, id);
+  }
+
+  @Delete('users/:id')
+  deleteUser(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
+    return this.usersService.deleteUser(actor.id, id);
   }
 
   @Get('users')
