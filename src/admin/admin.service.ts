@@ -72,7 +72,7 @@ export class AdminService {
       ] = await Promise.all([
         this.prisma.user.count({ where: { isDeleted: false } }),
         this.prisma.user.count({
-          where: { role: Role.AUTHOR, isDeleted: false },
+          where: { role: Role.USER, isDeleted: false },
         }),
         this.prisma.user.count({
           where: { role: Role.EDITOR, isDeleted: false },
@@ -81,9 +81,13 @@ export class AdminService {
           where: { role: Role.ADMIN, isDeleted: false },
         }),
         this.prisma.blog.count(),
-        this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.UNDER_REVIEW } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.EDITING } }),
+        this.prisma.blog.count({
+          where: { status: BlogStatus.QUALITY_REVIEW },
+        }),
+        this.prisma.blog.count({
+          where: { status: BlogStatus.READY_FOR_ADMIN },
+        }),
         this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
         this.prisma.blog.count({ where: { status: BlogStatus.REJECTED } }),
       ]);
@@ -150,12 +154,12 @@ export class AdminService {
       (sum, count) => sum + count,
       0,
     );
-    const totalAuthors = usersByRole.AUTHOR;
+    const totalAuthors = 0;
     const totalEditors = usersByRole.EDITOR;
     const totalAdmins = usersByRole.ADMIN;
-    const submittedBlogs = blogsByStatus.SUBMITTED;
-    const underReviewBlogs = blogsByStatus.UNDER_REVIEW;
-    const approvedBlogs = blogsByStatus.APPROVED;
+    const submittedBlogs = blogsByStatus.EDITING;
+    const underReviewBlogs = blogsByStatus.QUALITY_REVIEW;
+    const approvedBlogs = blogsByStatus.READY_FOR_ADMIN;
     const publishedBlogs = blogsByStatus.PUBLISHED;
     const rejectedBlogs = blogsByStatus.REJECTED;
 
@@ -220,29 +224,6 @@ export class AdminService {
       entityId: user.id,
     });
     return user;
-  }
-
-  async promoteToAuthor(actorId: string, userId: string) {
-    const user = await this.findUserOrThrow(userId);
-
-    if (user.role !== Role.USER) {
-      throw new BadRequestException('Only USER role can be promoted to AUTHOR');
-    }
-
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { role: Role.AUTHOR },
-      select: USER_SAFE_SELECT,
-    });
-
-    await this.audit.log({
-      actorId,
-      action: 'USER_PROMOTED_AUTHOR',
-      entityType: 'User',
-      entityId: userId,
-    });
-
-    return updated;
   }
 
   async blockUser(actorId: string, userId: string) {
@@ -355,6 +336,70 @@ export class AdminService {
     return paginate(data, total, page, limit);
   }
 
+  async approveBlog(actorId: string, blogId: string) {
+    const blog = await this.prisma.blog.findUnique({
+      where: { id: blogId },
+      include: {
+        editorialReviews: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    if (!blog) throw new NotFoundException('Blog not found');
+    if (blog.status !== BlogStatus.READY_FOR_ADMIN) {
+      throw new BadRequestException(
+        'Only READY_FOR_ADMIN blogs can be approved',
+      );
+    }
+    if (!blog.editorialReviews[0]) {
+      throw new BadRequestException(
+        'A critical editorial evaluation is required',
+      );
+    }
+    const existing = await this.prisma.auditLog.findFirst({
+      where: { entityType: 'Blog', entityId: blogId, action: 'ADMIN_APPROVED' },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException('Blog is already admin-approved');
+
+    await this.audit.log({
+      actorId,
+      action: 'ADMIN_APPROVED',
+      entityType: 'Blog',
+      entityId: blogId,
+      metadata: { reviewId: blog.editorialReviews[0].id },
+    });
+    return { approved: true, blogId };
+  }
+
+  async rejectBlog(actorId: string, blogId: string, reason: string) {
+    const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
+    if (!blog) throw new NotFoundException('Blog not found');
+    if (blog.status !== BlogStatus.READY_FOR_ADMIN) {
+      throw new BadRequestException(
+        'Only READY_FOR_ADMIN blogs can be rejected',
+      );
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.blog.update({
+        where: { id: blogId },
+        data: { status: BlogStatus.REJECTED, scheduledAt: null },
+        select: BLOG_LIST_SELECT,
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'ADMIN_REJECTED',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: { reason },
+        },
+      });
+      return updated;
+    });
+  }
+
   async publishBlog(actorId: string, blogId: string) {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
@@ -362,17 +407,15 @@ export class AdminService {
     if (blog.status === BlogStatus.PUBLISHED) {
       throw new ConflictException('Blog is already published');
     }
-    const allowedStatuses: BlogStatus[] = [
-      BlogStatus.SUBMITTED,
-      BlogStatus.UNPUBLISHED,
-      BlogStatus.APPROVED,
-    ];
-
-    if (!allowedStatuses.includes(blog.status)) {
+    if (
+      blog.status !== BlogStatus.READY_FOR_ADMIN &&
+      blog.status !== BlogStatus.SCHEDULED
+    ) {
       throw new BadRequestException(
-        'Only SUBMITTED, APPROVED, or UNPUBLISHED blogs can be published',
+        'Only READY_FOR_ADMIN or SCHEDULED blogs can be published',
       );
     }
+    await this.assertAdminApproved(blogId);
 
     const sanitized = sanitizeBlogHtml(blog.content);
     if (!sanitized.trim()) {
@@ -380,30 +423,112 @@ export class AdminService {
     }
     const { wordCount, readingTime } = computeReadingStats(sanitized);
 
-    const updated = await this.prisma.blog.update({
-      where: { id: blogId },
-      data: {
-        content: sanitized,
-        status: BlogStatus.PUBLISHED,
-        publishedAt: new Date(),
-        wordCount,
-        readingTime,
-      },
-      select: BLOG_LIST_SELECT,
-    });
-
-    await this.audit.log({
-      actorId,
-      action: 'BLOG_PUBLISHED',
-      entityType: 'Blog',
-      entityId: blogId,
-      metadata: {
-        oldStatus: blog.status,
-        newStatus: BlogStatus.PUBLISHED,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.blog.update({
+        where: { id: blogId },
+        data: {
+          content: sanitized,
+          status: BlogStatus.PUBLISHED,
+          publishedAt: new Date(),
+          scheduledAt: null,
+          wordCount,
+          readingTime,
+        },
+        select: BLOG_LIST_SELECT,
+      });
+      if (blog.submissionId)
+        await tx.submission.update({
+          where: { id: blog.submissionId },
+          data: { status: 'PUBLISHED' },
+        });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'BLOG_PUBLISHED',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: { oldStatus: blog.status, newStatus: BlogStatus.PUBLISHED },
+        },
+      });
+      return result;
     });
 
     return updated;
+  }
+
+  async scheduleBlog(actorId: string, blogId: string, publishAt: Date) {
+    const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
+    if (!blog) throw new NotFoundException('Blog not found');
+    if (blog.status !== BlogStatus.READY_FOR_ADMIN)
+      throw new BadRequestException(
+        'Only READY_FOR_ADMIN blogs can be scheduled',
+      );
+    if (publishAt <= new Date())
+      throw new BadRequestException('Publication time must be in the future');
+    await this.assertAdminApproved(blogId);
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.blog.update({
+        where: { id: blogId },
+        data: { status: BlogStatus.SCHEDULED, scheduledAt: publishAt },
+        select: BLOG_LIST_SELECT,
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'BLOG_SCHEDULED',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: {
+            oldStatus: BlogStatus.READY_FOR_ADMIN,
+            newStatus: BlogStatus.SCHEDULED,
+            publishAt,
+          },
+        },
+      });
+      return updated;
+    });
+  }
+
+  async publishDue(actorId: string) {
+    const due = await this.prisma.blog.findMany({
+      where: {
+        status: BlogStatus.SCHEDULED,
+        scheduledAt: { lte: new Date() },
+      },
+      select: { id: true },
+      orderBy: { scheduledAt: 'asc' },
+      take: 100,
+    });
+    const published = [];
+    for (const item of due)
+      published.push(await this.publishBlog(actorId, item.id));
+    return { processed: published.length, blogs: published };
+  }
+
+  async archiveBlog(actorId: string, blogId: string) {
+    const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
+    if (!blog) throw new NotFoundException('Blog not found');
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.blog.update({
+        where: { id: blogId },
+        data: { status: BlogStatus.ARCHIVED, scheduledAt: null },
+        select: BLOG_LIST_SELECT,
+      });
+      if (blog.submissionId)
+        await tx.submission.update({
+          where: { id: blog.submissionId },
+          data: { status: 'ARCHIVED' },
+        });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'BLOG_ARCHIVED',
+          entityType: 'Blog',
+          entityId: blogId,
+        },
+      });
+      return updated;
+    });
   }
 
   async unpublishBlog(actorId: string, blogId: string) {
@@ -586,5 +711,15 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  private async assertAdminApproved(blogId: string) {
+    const approval = await this.prisma.auditLog.findFirst({
+      where: { entityType: 'Blog', entityId: blogId, action: 'ADMIN_APPROVED' },
+      select: { id: true },
+    });
+    if (!approval) {
+      throw new BadRequestException('Admin approval is required first');
+    }
   }
 }

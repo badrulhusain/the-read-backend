@@ -13,15 +13,14 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { BlogsService } from '../blogs/blogs.service';
 import { EditorialEditDto } from './dto/editorial-edit.dto';
 import {
-  ApproveBlogDto,
-  RejectBlogDto,
-  RequestRevisionDto,
-} from './dto/editorial-note.dto';
-import {
   EditorialBlogQueryDto,
   EditorialQueryDto,
 } from './dto/editorial-query.dto';
 import { EditorialService } from './editorial.service';
+import {
+  CorrectionDto,
+  CriticalEvaluationDto,
+} from './dto/critical-evaluation.dto';
 
 type RequestUser = { id: string; role: Role };
 
@@ -86,40 +85,26 @@ export class EditorialController {
     return this.editorialService.edit(id, user, dto);
   }
 
-  @Post('blogs/:id/approve')
-  approve(
+  @Post('blogs/:id/evaluation')
+  evaluate(
     @Param('id') id: string,
     @CurrentUser() user: RequestUser,
-    @Body() dto: ApproveBlogDto,
+    @Body() dto: CriticalEvaluationDto,
   ) {
-    return this.editorialService.approve(id, user, dto);
+    return this.editorialService.submitCriticalEvaluation(id, user, dto);
   }
 
-  @Post('blogs/:id/reject')
-  reject(
+  @Post('blogs/:id/return-for-correction')
+  returnForCorrection(
     @Param('id') id: string,
     @CurrentUser() user: RequestUser,
-    @Body() dto: RejectBlogDto,
+    @Body() dto: CorrectionDto,
   ) {
-    return this.editorialService.reject(id, user, dto);
+    return this.editorialService.returnForCorrection(id, user, dto);
   }
 
-  @Post('blogs/:id/request-revision')
-  requestRevision(
-    @Param('id') id: string,
-    @CurrentUser() user: RequestUser,
-    @Body() dto: RequestRevisionDto,
-  ) {
-    return this.editorialService.requestRevision(id, user, dto);
-  }
-
-  @Post('blogs/:id/publish')
-  publish(@Param('id') id: string, @CurrentUser() user: RequestUser) {
-    return this.blogsService.publish(id, user);
-  }
-
-  @Post('blogs/:id/unpublish')
-  unpublish(@Param('id') id: string, @CurrentUser() user: RequestUser) {
-    return this.blogsService.unpublish(id, user);
+  @Post('blogs/:id/send-to-admin')
+  sendToAdmin(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.editorialService.sendToAdmin(id, user);
   }
 }

@@ -19,6 +19,8 @@ import {
   AdminBlogQueryDto,
   AdminCommentQueryDto,
 } from './dto/admin-query.dto';
+import { SchedulePublicationDto } from './dto/publication.dto';
+import { AdminRejectDto } from '../editorial/dto/critical-evaluation.dto';
 
 type RequestUser = { id: string; role: Role };
 
@@ -43,11 +45,6 @@ export class AdminController {
   @Post('admins')
   createAdmin(@CurrentUser() actor: RequestUser, @Body() dto: CreateStaffDto) {
     return this.adminService.createAdmin(actor.id, dto);
-  }
-
-  @Patch('users/:id/promote-author')
-  promoteToAuthor(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
-    return this.adminService.promoteToAuthor(actor.id, id);
   }
 
   @Patch('users/:id/block')
@@ -78,6 +75,39 @@ export class AdminController {
   @Post('blogs/:id/publish')
   publishBlog(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
     return this.adminService.publishBlog(actor.id, id);
+  }
+
+  @Post('blogs/:id/approve')
+  approveBlog(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
+    return this.adminService.approveBlog(actor.id, id);
+  }
+
+  @Post('blogs/:id/reject')
+  rejectBlog(
+    @Param('id') id: string,
+    @Body() dto: AdminRejectDto,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    return this.adminService.rejectBlog(actor.id, id, dto.reason);
+  }
+
+  @Post('blogs/:id/schedule')
+  scheduleBlog(
+    @Param('id') id: string,
+    @Body() dto: SchedulePublicationDto,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    return this.adminService.scheduleBlog(actor.id, id, dto.publishAt);
+  }
+
+  @Post('blogs/:id/archive')
+  archiveBlog(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
+    return this.adminService.archiveBlog(actor.id, id);
+  }
+
+  @Post('publications/run-due')
+  publishDue(@CurrentUser() actor: RequestUser) {
+    return this.adminService.publishDue(actor.id);
   }
 
   @Post('blogs/:id/unpublish')

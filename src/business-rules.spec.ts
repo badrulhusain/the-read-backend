@@ -1,26 +1,57 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  ValidationPipe,
-} from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { validate } from 'class-validator';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth/auth.service';
 import { RegisterDto } from './auth/dto/register.dto';
 import { BlogsService } from './blogs/blogs.service';
 import { UpdateBlogDto } from './blogs/dto/update-blog.dto';
-import { UpdateCoverImageDto } from './blogs/dto/cover-image.dto';
+import { UploadThumbnailDto } from './blogs/dto/workflow.dto';
+import { CriticalEvaluationDto } from './editorial/dto/critical-evaluation.dto';
 import { CreateCategoryDto } from './categories/dto/create-category.dto';
 import { CreateTagDto } from './tags/dto/create-tag.dto';
 import { DashboardService } from './dashboard/dashboard.service';
 import { UsersService } from './users/users.service';
 import { BlogStatus, Role, UserStatus } from './generated/prisma/client';
+import {
+  ContributorDto,
+  CreateSubmissionDto,
+  ReviewSubmissionDto,
+} from './submissions/dto/submission.dto';
 
 describe('business rules', () => {
   const audit = { log: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('curated editorial workflow validation', () => {
+    it('has exactly USER, EDITOR and ADMIN roles', () => {
+      expect(Object.values(Role)).toEqual(['USER', 'EDITOR', 'ADMIN']);
+    });
+
+    it('accepts an external contributor submission without a user id', async () => {
+      const dto = Object.assign(new CreateSubmissionDto(), {
+        contributor: Object.assign(new ContributorDto(), {
+          name: 'External Writer',
+          email: 'writer@example.com',
+        }),
+        title: 'A carefully reported story',
+        content: '<p>Draft story</p>',
+      });
+      expect(await validate(dto)).toHaveLength(0);
+      expect(dto).not.toHaveProperty('userId');
+    });
+
+    it('requires structured fact and checklist data for editorial approval', async () => {
+      const dto = Object.assign(new ReviewSubmissionDto(), {
+        decision: 'READY_FOR_ADMIN',
+      });
+      const errors = await validate(dto);
+      expect(errors.map((error) => error.property)).toEqual(
+        expect.arrayContaining(['factCheckStatus', 'checklist']),
+      );
+    });
   });
 
   describe('password validation', () => {
@@ -66,10 +97,10 @@ describe('business rules', () => {
 
     it('accepts isActive when creating a tag from the admin UI', async () => {
       await expect(
-        validationPipe.transform(
-          { name: 'Longform', isActive: true },
-          { type: 'body', metatype: CreateTagDto } as any,
-        ),
+        validationPipe.transform({ name: 'Longform', isActive: true }, {
+          type: 'body',
+          metatype: CreateTagDto,
+        } as any),
       ).resolves.toMatchObject({ name: 'Longform', isActive: true });
     });
   });
@@ -83,7 +114,12 @@ describe('business rules', () => {
     });
 
     function createBlogsService(prisma: Record<string, any>) {
-      return new BlogsService(prisma as any, audit as any);
+      return new BlogsService(
+        prisma as any,
+        audit as any,
+        {} as any,
+        {} as any,
+      );
     }
 
     it('rejects old flat cover image fields in blog update DTO', async () => {
@@ -112,115 +148,42 @@ describe('business rules', () => {
       });
     });
 
-    it('accepts nested coverImage in blog update DTO', async () => {
+    it('rejects URL-based cover image writes', async () => {
       await expect(
         validationPipe.transform(
           {
             title: 'Valid title',
-            seoTitle: 'SEO title',
-            seoDescription: 'SEO description',
-            categoryId: 'category-1',
-            tagIds: ['tag-1', 'tag-2'],
-            coverImage: {
-              url: 'https://example.com/cover.jpg',
-              publicId: 'covers/one',
-              altText: 'Cover',
-              crop: { x: 1, y: 2, width: 300, height: 200, zoom: 1.2 },
-            },
+            coverImage: { url: 'https://example.com/a.jpg' },
           },
           { type: 'body', metatype: UpdateBlogDto } as any,
         ),
-      ).resolves.toMatchObject({
-        coverImage: {
-          url: 'https://example.com/cover.jpg',
-          publicId: 'covers/one',
-        },
-      });
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('accepts nested coverImage in cover image endpoint DTO', async () => {
-      await expect(
-        validationPipe.transform(
-          {
-            coverImage: {
-              url: 'https://example.com/cover.jpg',
-              publicId: 'covers/one',
-              altText: 'Cover',
-              crop: { x: 1, y: 2, width: 300, height: 200, zoom: 1.2 },
-            },
-          },
-          { type: 'body', metatype: UpdateCoverImageDto } as any,
-        ),
-      ).resolves.toMatchObject({
-        coverImage: { url: 'https://example.com/cover.jpg' },
-      });
+    it('requires accessible alt text for thumbnail uploads', async () => {
+      const dto = Object.assign(new UploadThumbnailDto(), {});
+      expect((await validate(dto)).map((error) => error.property)).toContain(
+        'altText',
+      );
     });
 
-    it('blocks authors from updating nested cover images through blog update', async () => {
-      const service = createBlogsService({
-        blog: {
-          findUnique: jest.fn().mockResolvedValue({
-            id: 'blog-1',
-            authorId: 'author-1',
-            status: BlogStatus.DRAFT,
-          }),
-        },
+    it('requires the complete critical evaluation scorecard', async () => {
+      const dto = Object.assign(new CriticalEvaluationDto(), {
+        contentQualityScore: 85,
       });
-
-      await expect(
-        service.update(
-          'blog-1',
-          { id: 'author-1', role: Role.AUTHOR },
-          { coverImage: { url: 'https://example.com/cover.jpg' } },
-        ),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      const properties = (await validate(dto)).map((error) => error.property);
+      expect(properties).toEqual(
+        expect.arrayContaining([
+          'grammarStatus',
+          'readabilityScore',
+          'factCheckStatus',
+          'recommendation',
+          'finalChecklist',
+        ]),
+      );
     });
 
-    it.each([Role.EDITOR, Role.ADMIN])(
-      'allows %s to update cover image metadata',
-      async (role) => {
-        const update = jest.fn().mockResolvedValue({ id: 'blog-1' });
-        const service = createBlogsService({
-          blog: {
-            findUnique: jest.fn().mockResolvedValue({ id: 'blog-1' }),
-            update,
-          },
-        });
-
-        await service.updateCoverImage(
-          'blog-1',
-          { id: 'staff-1', role },
-          {
-            coverImage: {
-              url: 'https://example.com/cover.jpg',
-              publicId: 'covers/one',
-              altText: 'Cover',
-              crop: { x: 1, y: 2, width: 300, height: 200, zoom: 1.2 },
-            },
-          },
-        );
-
-        expect(update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({
-              coverImage: 'https://example.com/cover.jpg',
-              coverImagePublicId: 'covers/one',
-              coverImageAltText: 'Cover',
-              coverImageUploadedById: 'staff-1',
-              coverImageCrop: {
-                x: 1,
-                y: 2,
-                width: 300,
-                height: 200,
-                zoom: 1.2,
-              },
-            }),
-          }),
-        );
-      },
-    );
-
-    it('publishes submitted blogs', async () => {
+    it('allows admins to publish READY_FOR_ADMIN blogs', async () => {
       const update = jest
         .fn()
         .mockResolvedValue({ status: BlogStatus.PUBLISHED });
@@ -228,14 +191,14 @@ describe('business rules', () => {
         blog: {
           findUnique: jest.fn().mockResolvedValue({
             id: 'blog-1',
-            status: BlogStatus.SUBMITTED,
+            status: BlogStatus.READY_FOR_ADMIN,
             content: '<h3>Ready to publish</h3>',
           }),
           update,
         },
       });
 
-      await service.publish('blog-1', { id: 'editor-1', role: Role.EDITOR });
+      await service.publish('blog-1', { id: 'admin-1', role: Role.ADMIN });
 
       expect(update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -259,8 +222,8 @@ describe('business rules', () => {
       });
 
       await service.unpublish('blog-1', {
-        id: 'editor-1',
-        role: Role.EDITOR,
+        id: 'admin-1',
+        role: Role.ADMIN,
       });
 
       expect(update).toHaveBeenCalledWith(
@@ -270,10 +233,7 @@ describe('business rules', () => {
       );
     });
 
-    it('republishes unpublished blogs', async () => {
-      const update = jest
-        .fn()
-        .mockResolvedValue({ status: BlogStatus.PUBLISHED });
+    it('does not publish UNPUBLISHED blogs without a new approval', async () => {
       const service = createBlogsService({
         blog: {
           findUnique: jest.fn().mockResolvedValue({
@@ -281,17 +241,13 @@ describe('business rules', () => {
             status: BlogStatus.UNPUBLISHED,
             content: '<p>Ready to republish</p>',
           }),
-          update,
+          update: jest.fn(),
         },
       });
 
-      await service.publish('blog-1', { id: 'editor-1', role: Role.EDITOR });
-
-      expect(update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: BlogStatus.PUBLISHED }),
-        }),
-      );
+      await expect(
+        service.publish('blog-1', { id: 'admin-1', role: Role.ADMIN }),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -407,16 +363,16 @@ describe('business rules', () => {
       expect(dashboard.stats).toMatchObject({
         users: 11,
         totalUsers: 11,
-        submitted: 4,
-        submittedBlogs: 4,
-        underReview: 5,
-        underReviewBlogs: 5,
-        approved: 6,
-        approvedBlogs: 6,
-        published: 7,
-        publishedBlogs: 7,
-        rejected: 8,
-        rejectedBlogs: 8,
+        submitted: 9,
+        submittedBlogs: 9,
+        underReview: 4,
+        underReviewBlogs: 4,
+        approved: 5,
+        approvedBlogs: 5,
+        published: 6,
+        publishedBlogs: 6,
+        rejected: 7,
+        rejectedBlogs: 7,
       });
     });
   });
