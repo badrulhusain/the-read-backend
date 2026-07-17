@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { createCorsOriginChecker } from './common/utils/cors-origin';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -22,16 +23,17 @@ async function bootstrap() {
   app.use(helmet());
   app.use(compression() as any);
 
-  const allowedOrigins = (process.env.FRONTEND_URL ?? 'http://localhost:5173')
-    .split(',')
-    .map((o) => o.trim());
+  const isOriginAllowed = createCorsOriginChecker(
+    process.env.FRONTEND_URL,
+    process.env.NODE_ENV,
+  );
 
   app.enableCors({
     origin: (
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isOriginAllowed(origin)) {
         callback(null, true);
       } else {
         callback(new Error(`CORS: origin ${origin} not allowed`));
