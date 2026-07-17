@@ -49,6 +49,27 @@ const BLOG_LIST_SELECT = {
   category: { select: { id: true, name: true, slug: true } },
 } as const;
 
+const ADMIN_BLOG_DETAIL_SELECT = {
+  ...BLOG_LIST_SELECT,
+  excerpt: true,
+  content: true,
+  coverImage: true,
+  coverImagePublicId: true,
+  coverImageAltText: true,
+  coverImageCrop: true,
+  seoTitle: true,
+  seoDescription: true,
+  wordCount: true,
+  scheduledAt: true,
+  contributor: { select: { id: true, name: true, bio: true } },
+  tags: { select: { tag: { select: { id: true, name: true, slug: true } } } },
+  sources: { orderBy: { createdAt: 'asc' as const } },
+  editorialReviews: {
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+  },
+} as const;
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -336,6 +357,20 @@ export class AdminService {
     return paginate(data, total, page, limit);
   }
 
+  async listPublicationQueue(query: AdminBlogQueryDto) {
+    return this.listBlogs({ ...query, status: BlogStatus.READY_FOR_ADMIN });
+  }
+
+  async getArticle(id: string) {
+    const result = await this.prisma.blog.findUnique({
+      where: { id },
+      select: ADMIN_BLOG_DETAIL_SELECT,
+    });
+    if (!result) throw new NotFoundException('Blog not found');
+    const { editorialReviews, ...blog } = result;
+    return { ...blog, editorialReview: editorialReviews[0] ?? null };
+  }
+
   async approveBlog(actorId: string, blogId: string) {
     const blog = await this.prisma.blog.findUnique({
       where: { id: blogId },
@@ -394,6 +429,34 @@ export class AdminService {
           entityType: 'Blog',
           entityId: blogId,
           metadata: { reason },
+        },
+      });
+      return updated;
+    });
+  }
+
+  async returnToEditor(actorId: string, blogId: string, note: string) {
+    const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
+    if (!blog) throw new NotFoundException('Blog not found');
+    if (blog.status !== BlogStatus.READY_FOR_ADMIN) {
+      throw new BadRequestException(
+        'Only READY_FOR_ADMIN blogs can be returned to an editor',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.blog.update({
+        where: { id: blogId },
+        data: { status: BlogStatus.NEEDS_CORRECTION, scheduledAt: null },
+        select: BLOG_LIST_SELECT,
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'ADMIN_RETURNED_TO_EDITOR',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: { note },
         },
       });
       return updated;

@@ -32,6 +32,7 @@ import {
   CorrectionDto,
   CriticalEvaluationDto,
 } from './dto/critical-evaluation.dto';
+import { SaveEditorialReviewDto } from './dto/editorial-workflow.dto';
 
 type RequestUser = { id: string; role: Role };
 
@@ -89,6 +90,16 @@ const BLOG_SELECT = {
   updatedAt: true,
   author: { select: { id: true, name: true, email: true } },
   assignedEditor: { select: { id: true, name: true, email: true } },
+  category: { select: { id: true, name: true, slug: true } },
+  tags: {
+    select: { tag: { select: { id: true, name: true, slug: true } } },
+  },
+  thumbnail: true,
+  sources: { orderBy: { createdAt: 'asc' as const } },
+  editorialReviews: {
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+  },
   reviews: {
     select: REVIEW_SELECT,
     orderBy: { createdAt: 'desc' as const },
@@ -148,7 +159,11 @@ export class EditorialService {
       }
     }
 
-    return blog;
+    const { editorialReviews, ...article } = blog;
+    return {
+      ...article,
+      editorialReview: editorialReviews[0] ?? null,
+    };
   }
 
   async listSubmissions(query: EditorialQueryDto) {
@@ -198,6 +213,29 @@ export class EditorialService {
     return paginate(data, total, page, limit);
   }
 
+  async listMyWork(query: EditorialBlogQueryDto, user: RequestUser) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+    const where = {
+      OR: [{ createdById: user.id }, { assignedEditorId: user.id }],
+      ...(query.status ? { status: query.status } : {}),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: SUBMISSION_LIST_SELECT,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
+  }
+
   async pick(id: string, user: RequestUser) {
     const blog = await this.prisma.blog.findUnique({ where: { id } });
     if (!blog) throw new NotFoundException('Blog not found');
@@ -228,6 +266,82 @@ export class EditorialService {
     });
 
     return updated;
+  }
+
+  async assign(id: string, user: RequestUser, editorId: string) {
+    const blog = await this.prisma.blog.findUnique({ where: { id } });
+    if (!blog) throw new NotFoundException('Blog not found');
+    if (user.role !== Role.ADMIN && editorId !== user.id) {
+      throw new ForbiddenException(
+        'Editors can only assign work to themselves',
+      );
+    }
+
+    const editor = await this.prisma.user.findFirst({
+      where: { id: editorId, role: { in: [Role.EDITOR, Role.ADMIN] } },
+      select: { id: true },
+    });
+    if (!editor) throw new NotFoundException('Editor not found');
+
+    const updated = await this.prisma.blog.update({
+      where: { id },
+      data: {
+        assignedEditorId: editorId,
+        ...(blog.status === BlogStatus.EDITING
+          ? { status: BlogStatus.QUALITY_REVIEW }
+          : {}),
+      },
+      select: BLOG_SELECT,
+    });
+    await this.audit.log({
+      actorId: user.id,
+      action: 'BLOG_ASSIGNED',
+      entityType: 'Blog',
+      entityId: id,
+      metadata: { assignedEditorId: editorId },
+    });
+    return updated;
+  }
+
+  async saveReview(id: string, user: RequestUser, dto: SaveEditorialReviewDto) {
+    await this.assertReviewer(id, user);
+    const recommendation =
+      dto.recommendation === 'APPROVE'
+        ? EditorRecommendation.READY_FOR_ADMIN
+        : dto.recommendation === 'RETURN'
+          ? EditorRecommendation.NEEDS_CORRECTION
+          : dto.recommendation === 'REJECT'
+            ? EditorRecommendation.REJECT
+            : undefined;
+
+    await this.prisma.$transaction(async (tx) => {
+      const review = await tx.editorialReview.create({
+        data: {
+          blogId: id,
+          editorId: user.id,
+          internalNotes: dto.internalNotes,
+          plagiarismScore: dto.plagiarismScore,
+          factCheckStatus: dto.factCheckComplete ? 'PASSED' : 'NOT_STARTED',
+          recommendation,
+          checklist: {
+            ...(dto.editorialChecklist ?? {}),
+            plagiarismReviewed: dto.plagiarismReviewed ?? false,
+            factCheckComplete: dto.factCheckComplete ?? false,
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: 'EDITORIAL_REVIEW_SAVED',
+          entityType: 'Blog',
+          entityId: id,
+          metadata: { reviewId: review.id },
+        },
+      });
+    });
+
+    return this.getBlog(id, user);
   }
 
   async edit(id: string, user: RequestUser, dto: EditorialEditDto) {
@@ -515,6 +629,28 @@ export class EditorialService {
       });
       return review;
     });
+  }
+
+  async completeQualityReview(id: string, user: RequestUser) {
+    await this.assertReviewer(id, user);
+    const review = await this.prisma.editorialReview.findFirst({
+      where: { blogId: id, editorId: user.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!review) {
+      throw new BadRequestException(
+        'Save a critical editorial evaluation before completing review',
+      );
+    }
+    await this.audit.log({
+      actorId: user.id,
+      action: 'QUALITY_REVIEW_COMPLETED',
+      entityType: 'Blog',
+      entityId: id,
+      metadata: { reviewId: review.id },
+    });
+    return this.getBlog(id, user);
   }
 
   async returnForCorrection(id: string, user: RequestUser, dto: CorrectionDto) {

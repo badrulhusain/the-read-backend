@@ -37,6 +37,19 @@ export class ReaderController {
   ) {
     return this.service.listSaved(user.id, page, limit);
   }
+  @Get('history') history(
+    @CurrentUser() user: User,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.service.listHistory(user.id, page, limit);
+  }
+  @Post('history/:blogId') recordHistory(
+    @CurrentUser() user: User,
+    @Param('blogId') id: string,
+  ) {
+    return this.service.recordHistory(user.id, id);
+  }
   @Post('reports/:blogId') report(
     @CurrentUser() user: User,
     @Param('blogId') id: string,

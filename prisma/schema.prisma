@@ -104,6 +104,12 @@ enum ReportStatus {
   ACTIONED
 }
 
+enum ReactionType {
+  INSIGHTFUL
+  INSPIRING
+  THOUGHT_PROVOKING
+}
+
 model User {
   id                  String            @id @default(uuid())
   name                String
@@ -130,6 +136,8 @@ model User {
   internalNotes       EditorialNote[]
   uploadedThumbnails  Thumbnail[]       @relation("ThumbnailUploader")
   verifiedSources     SourceReference[] @relation("SourceVerifier")
+  readingHistory      ReadingHistory[]
+  blogReactions       BlogReaction[]
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
@@ -281,6 +289,8 @@ model Blog {
   sources                SourceReference[]
   thumbnail              Thumbnail?
   editorialReviews       EditorialReview[]
+  readingHistory         ReadingHistory[]
+  reactions              BlogReaction[]
   lastAutosavedAt        DateTime?
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
@@ -342,6 +352,41 @@ model SavedBlog {
 
   @@id([userId, blogId])
   @@index([blogId])
+}
+
+model ReadingHistory {
+  userId     String
+  blogId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blog       Blog     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  lastReadAt DateTime @default(now()) @updatedAt
+
+  @@id([userId, blogId])
+  @@index([userId, lastReadAt])
+  @@index([blogId])
+}
+
+model BlogReaction {
+  userId    String
+  blogId    String
+  type      ReactionType
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blog      Blog         @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@id([userId, blogId, type])
+  @@index([blogId, type])
+  @@index([userId, createdAt])
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, createdAt])
 }
 
 model Notification {

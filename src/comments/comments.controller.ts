@@ -42,6 +42,15 @@ export class CommentsController {
     return this.commentsService.create(slug, user, dto);
   }
 
+  @Patch('comments/:id')
+  update(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Body() dto: CreateCommentDto,
+  ) {
+    return this.commentsService.update(id, user, dto);
+  }
+
   // Protected: soft-delete own comment; admin/editor can delete any
   @Delete('comments/:id')
   remove(@Param('id') id: string, @CurrentUser() user: RequestUser) {

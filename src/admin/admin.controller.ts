@@ -19,7 +19,10 @@ import {
   AdminBlogQueryDto,
   AdminCommentQueryDto,
 } from './dto/admin-query.dto';
-import { SchedulePublicationDto } from './dto/publication.dto';
+import {
+  ReturnToEditorDto,
+  SchedulePublicationDto,
+} from './dto/publication.dto';
 import { AdminRejectDto } from '../editorial/dto/critical-evaluation.dto';
 
 type RequestUser = { id: string; role: Role };
@@ -72,6 +75,16 @@ export class AdminController {
     return this.adminService.listBlogs(query);
   }
 
+  @Get('publication-queue')
+  publicationQueue(@Query() query: AdminBlogQueryDto) {
+    return this.adminService.listPublicationQueue(query);
+  }
+
+  @Get('articles/:id')
+  getArticle(@Param('id') id: string) {
+    return this.adminService.getArticle(id);
+  }
+
   @Post('blogs/:id/publish')
   publishBlog(@Param('id') id: string, @CurrentUser() actor: RequestUser) {
     return this.adminService.publishBlog(actor.id, id);
@@ -89,6 +102,15 @@ export class AdminController {
     @CurrentUser() actor: RequestUser,
   ) {
     return this.adminService.rejectBlog(actor.id, id, dto.reason);
+  }
+
+  @Post('blogs/:id/return-to-editor')
+  returnToEditor(
+    @Param('id') id: string,
+    @Body() dto: ReturnToEditorDto,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    return this.adminService.returnToEditor(actor.id, id, dto.note);
   }
 
   @Post('blogs/:id/schedule')

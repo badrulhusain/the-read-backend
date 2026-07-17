@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateBlogDto } from './dto/create-blog.dto';
+import { CoverImageDto, UpdateCoverImageDto } from './dto/cover-image.dto';
 import { UpdateBlogDto } from './dto/update-blog.dto';
 import { BlogQueryDto } from './dto/blog-query.dto';
 import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
@@ -327,6 +328,23 @@ export class BlogsService {
     return paginate(data, total, page, limit);
   }
 
+  async listTrending(query: BlogQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const where = { status: BlogStatus.PUBLISHED };
+    const [data, total] = await Promise.all([
+      this.prisma.blog.findMany({
+        where,
+        select: BLOG_LIST_SELECT,
+        orderBy: [{ reactions: { _count: 'desc' } }, { publishedAt: 'desc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.blog.count({ where }),
+    ]);
+    return paginate(data, total, page, limit);
+  }
+
   async getPublishedBySlug(slug: string) {
     const blog = await this.prisma.blog.findUnique({
       where: { slug },
@@ -358,6 +376,15 @@ export class BlogsService {
       throw new NotFoundException('Blog not found');
     }
 
+    return blog;
+  }
+
+  async getPublishedById(id: string) {
+    const blog = await this.prisma.blog.findFirst({
+      where: { id, status: BlogStatus.PUBLISHED },
+      select: BLOG_DETAIL_SELECT,
+    });
+    if (!blog) throw new NotFoundException('Blog not found');
     return blog;
   }
 
@@ -705,6 +732,29 @@ export class BlogsService {
     });
   }
 
+  async updateCoverImage(
+    id: string,
+    user: RequestUser,
+    dto: UpdateCoverImageDto,
+  ) {
+    await this.assertEditorialAccess(id, user);
+
+    const updated = await this.prisma.blog.update({
+      where: { id },
+      data: this.toCoverImageData(dto.coverImage, user.id),
+      select: BLOG_DETAIL_SELECT,
+    });
+
+    await this.audit.log({
+      actorId: user.id,
+      action: 'BLOG_COVER_IMAGE_UPDATED',
+      entityType: 'Blog',
+      entityId: id,
+    });
+
+    return updated;
+  }
+
   async uploadThumbnail(
     id: string,
     user: RequestUser,
@@ -1050,6 +1100,40 @@ export class BlogsService {
     const blog = await this.prisma.blog.findUnique({ where: { id } });
     if (!blog) throw new NotFoundException('Blog not found');
     return blog;
+  }
+
+  private toCoverImageData(
+    coverImage: CoverImageDto | null | undefined,
+    uploadedBy: string,
+  ): Record<string, unknown> {
+    if (coverImage === undefined) return {};
+
+    if (coverImage === null) {
+      return {
+        coverImage: null,
+        coverImagePublicId: null,
+        coverImageAltText: null,
+        coverImageCrop: null,
+        coverImageUploadedById: null,
+      };
+    }
+
+    const hasUrl = coverImage.url !== undefined;
+    return {
+      ...(hasUrl ? { coverImage: coverImage.url } : {}),
+      ...(coverImage.publicId !== undefined
+        ? { coverImagePublicId: coverImage.publicId }
+        : {}),
+      ...(coverImage.altText !== undefined
+        ? { coverImageAltText: coverImage.altText }
+        : {}),
+      ...(coverImage.crop !== undefined
+        ? { coverImageCrop: coverImage.crop }
+        : {}),
+      ...(hasUrl
+        ? { coverImageUploadedById: coverImage.url ? uploadedBy : null }
+        : {}),
+    };
   }
 
   private async assertCategoryExists(categoryId: string) {

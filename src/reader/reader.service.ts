@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BlogStatus } from '../generated/prisma/client';
+import { BlogStatus, ReactionType } from '../generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { paginate } from '../common/utils/pagination.util';
 @Injectable()
@@ -18,11 +18,12 @@ export class ReaderService {
   }
   async save(userId: string, blogId: string) {
     await this.published(blogId);
-    return this.prisma.savedBlog.upsert({
+    await this.prisma.savedBlog.upsert({
       where: { userId_blogId: { userId, blogId } },
       update: {},
       create: { userId, blogId },
     });
+    return { saved: true };
   }
   async unsave(userId: string, blogId: string) {
     await this.prisma.savedBlog.deleteMany({ where: { userId, blogId } });
@@ -47,6 +48,73 @@ export class ReaderService {
       this.prisma.savedBlog.count({ where }),
     ]);
     return paginate(data, total, page, limit);
+  }
+  async recordHistory(userId: string, blogId: string) {
+    await this.published(blogId);
+    await this.prisma.readingHistory.upsert({
+      where: { userId_blogId: { userId, blogId } },
+      update: { lastReadAt: new Date() },
+      create: { userId, blogId },
+    });
+    return { recorded: true };
+  }
+  async listHistory(userId: string, page = 1, limit = 20) {
+    limit = Math.min(Math.max(limit, 1), 100);
+    page = Math.max(page, 1);
+    const where = { userId, blog: { status: BlogStatus.PUBLISHED } };
+    const [rows, total] = await Promise.all([
+      this.prisma.readingHistory.findMany({
+        where,
+        include: {
+          blog: {
+            include: { category: true, tags: { include: { tag: true } } },
+          },
+        },
+        orderBy: { lastReadAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.readingHistory.count({ where }),
+    ]);
+    return paginate(
+      rows.map((row) => row.blog),
+      total,
+      page,
+      limit,
+    );
+  }
+  async react(userId: string, blogId: string, type: ReactionType) {
+    await this.published(blogId);
+    await this.prisma.blogReaction.upsert({
+      where: { userId_blogId_type: { userId, blogId, type } },
+      update: {},
+      create: { userId, blogId, type },
+    });
+    return this.reactionCounts(blogId);
+  }
+  async reactionCounts(blogId: string) {
+    await this.published(blogId);
+    const grouped = await this.prisma.blogReaction.groupBy({
+      by: ['type'],
+      where: { blogId },
+      _count: { _all: true },
+    });
+    const counts: Record<ReactionType, number> = {
+      INSIGHTFUL: 0,
+      INSPIRING: 0,
+      THOUGHT_PROVOKING: 0,
+    };
+    for (const item of grouped) counts[item.type] = item._count._all;
+    return counts;
+  }
+  async subscribe(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    await this.prisma.newsletterSubscriber.upsert({
+      where: { email: normalizedEmail },
+      update: { isActive: true },
+      create: { email: normalizedEmail },
+    });
+    return { subscribed: true };
   }
   async report(
     userId: string,

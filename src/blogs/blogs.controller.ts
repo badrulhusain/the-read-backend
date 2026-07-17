@@ -17,6 +17,7 @@ import { Role } from '../generated/prisma/client';
 import { BlogsService } from './blogs.service';
 import { CreateBlogDto } from './dto/create-blog.dto';
 import { UpdateBlogDto } from './dto/update-blog.dto';
+import { UpdateCoverImageDto } from './dto/cover-image.dto';
 import { BlogQueryDto } from './dto/blog-query.dto';
 import { HistoryQueryDto, TimelineQueryDto } from './dto/history-query.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -119,6 +120,27 @@ export class BlogsController {
   }
 
   // ── Public slug endpoints (keep after specific routes) ───────────────────
+
+  @Public()
+  @Get('featured')
+  @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
+  featured(@Query() query: BlogQueryDto) {
+    return this.blogsService.listPublished(query);
+  }
+
+  @Public()
+  @Get('trending')
+  @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
+  trending(@Query() query: BlogQueryDto) {
+    return this.blogsService.listTrending(query);
+  }
+
+  @Public()
+  @Get('id/:id')
+  @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
+  getPublishedById(@Param('id') id: string) {
+    return this.blogsService.getPublishedById(id);
+  }
 
   @Public()
   @Get(':slug/related')
@@ -230,6 +252,16 @@ export class BlogsController {
     @Body() dto: UpdateBlogDto,
   ) {
     return this.blogsService.update(id, user, dto);
+  }
+
+  @Roles(Role.EDITOR, Role.ADMIN)
+  @Patch(':id/cover-image')
+  updateCoverImage(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Body() dto: UpdateCoverImageDto,
+  ) {
+    return this.blogsService.updateCoverImage(id, user, dto);
   }
 
   @Roles(Role.EDITOR, Role.ADMIN)
