@@ -10,7 +10,6 @@ datasource db {
 
 enum Role {
   USER
-  AUTHOR
   EDITOR
   ADMIN
 }
@@ -23,20 +22,64 @@ enum UserStatus {
 
 enum BlogStatus {
   DRAFT
-  SUBMITTED
-  UNDER_REVIEW
-  REVISION_REQUESTED
-  APPROVED
-  REJECTED
+  EDITING
+  QUALITY_REVIEW
+  NEEDS_CORRECTION
+  READY_FOR_ADMIN
+  SCHEDULED
   PUBLISHED
+  REJECTED
   UNPUBLISHED
   ARCHIVED
 }
 
+enum GrammarStatus {
+  NOT_REVIEWED
+  PASSED
+  NEEDS_CORRECTION
+}
+
+enum SourceVerificationStatus {
+  NOT_REVIEWED
+  IN_PROGRESS
+  VERIFIED
+  NEEDS_CORRECTION
+  FAILED
+}
+
+enum EditorRecommendation {
+  NEEDS_CORRECTION
+  READY_FOR_ADMIN
+  REJECT
+}
+
+enum SubmissionStatus {
+  RECEIVED
+  TRIAGE
+  ASSIGNED
+  EDITING
+  NEEDS_RESPONSE
+  QUALITY_REVIEW
+  READY_FOR_ADMIN
+  REJECTED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum FactCheckStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  PASSED
+  NEEDS_CHANGES
+  FAILED
+}
+
 enum ReviewDecision {
   APPROVED
-  REJECTED
   REVISION_REQUESTED
+  NEEDS_RESPONSE
+  READY_FOR_ADMIN
+  REJECTED
 }
 
 enum CommentStatus {
@@ -46,39 +89,175 @@ enum CommentStatus {
   PENDING
 }
 
+enum NotificationType {
+  SUBMISSION_UPDATE
+  EDITOR_ASSIGNED
+  REVIEW_COMPLETE
+  PUBLICATION
+  SYSTEM
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+  ACTIONED
+}
+
+enum ReactionType {
+  INSIGHTFUL
+  INSPIRING
+  THOUGHT_PROVOKING
+}
+
 model User {
-  id           String     @id @default(uuid())
-  name         String
-  email        String     @unique
-  passwordHash String
-  role         Role       @default(USER)
-  status       UserStatus @default(ACTIVE)
-  isDeleted    Boolean    @default(false)
-  deletedAt    DateTime?
+  id                  String            @id @default(uuid())
+  name                String
+  email               String            @unique
+  passwordHash        String
+  role                Role              @default(USER)
+  status              UserStatus        @default(ACTIVE)
+  isDeleted           Boolean           @default(false)
+  deletedAt           DateTime?
+  avatarUrl           String?
+  avatarPublicId      String?
+  createdBlogs        Blog[]            @relation("BlogCreator")
+  blogs               Blog[]            @relation("BlogAuthor")
+  assignedBlogs       Blog[]            @relation("AssignedBlogEditor")
+  assignedSubmissions Submission[]      @relation("AssignedEditor")
+  reviews             EditorialReview[]
+  blogReviews         BlogReview[]
+  versions            BlogVersion[]
+  auditLogs           AuditLog[]
+  comments            Comment[]
+  savedBlogs          SavedBlog[]
+  notifications       Notification[]
+  reports             BlogReport[]
+  internalNotes       EditorialNote[]
+  uploadedThumbnails  Thumbnail[]       @relation("ThumbnailUploader")
+  verifiedSources     SourceReference[] @relation("SourceVerifier")
+  readingHistory      ReadingHistory[]
+  blogReactions       BlogReaction[]
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
-  avatarUrl      String?
-  avatarPublicId String?
-
-  blogs         Blog[]        @relation("BlogAuthor")
-  assignedBlogs Blog[]        @relation("AssignedEditor")
-  reviews       BlogReview[]
-  versions      BlogVersion[]
-  auditLogs     AuditLog[]
-  comments      Comment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([email])
-  @@index([role])
-  @@index([status])
+  @@index([role, status])
   @@index([isDeleted])
 }
 
+model Contributor {
+  id           String       @id @default(uuid())
+  name         String
+  email        String
+  phone        String?
+  bio          String?
+  organization String?
+  websiteUrl   String?
+  submissions  Submission[]
+  blogs        Blog[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([email])
+}
+
+model Submission {
+  id                 String            @id @default(uuid())
+  contributorId      String
+  contributor        Contributor       @relation(fields: [contributorId], references: [id], onDelete: Restrict)
+  title              String
+  pitch              String?
+  content            String
+  status             SubmissionStatus  @default(RECEIVED)
+  assignedEditorId   String?
+  assignedEditor     User?             @relation("AssignedEditor", fields: [assignedEditorId], references: [id], onDelete: SetNull)
+  plagiarismScore    Decimal?          @db.Decimal(5, 2)
+  factCheckStatus    FactCheckStatus   @default(NOT_STARTED)
+  editorialChecklist Json?
+  submittedAt        DateTime          @default(now())
+  reviewedAt         DateTime?
+  reviews            EditorialReview[]
+  notes              EditorialNote[]
+  emails             SubmissionEmail[]
+  blog               Blog?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([status, createdAt])
+  @@index([assignedEditorId, status, updatedAt])
+  @@index([contributorId, createdAt])
+}
+
+model EditorialReview {
+  id                       String                    @id @default(uuid())
+  submissionId             String?
+  submission               Submission?               @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  blogId                   String?
+  blog                     Blog?                     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  editorId                 String
+  editor                   User                      @relation(fields: [editorId], references: [id], onDelete: Restrict)
+  decision                 ReviewDecision?
+  summary                  String?
+  contentQualityScore      Int?
+  grammarStatus            GrammarStatus?
+  readabilityScore         Int?
+  plagiarismScore          Decimal?                  @db.Decimal(5, 2)
+  plagiarismNotes          String?
+  factCheckStatus          FactCheckStatus?
+  factCheckNotes           String?
+  sourceVerificationStatus SourceVerificationStatus?
+  headlineQuality          Int?
+  introductionQuality      Int?
+  structureQuality         Int?
+  conclusionQuality        Int?
+  seoReadiness             Int?
+  thumbnailQuality         Int?
+  copyrightConfirmed       Boolean?
+  recommendation           EditorRecommendation?
+  internalNotes            String?
+  requiredCorrections      Json?
+  checklist                Json?
+  createdAt                DateTime                  @default(now())
+
+  @@index([blogId, createdAt])
+  @@index([submissionId, createdAt])
+  @@index([editorId, createdAt])
+  @@index([decision, createdAt])
+}
+
+model EditorialNote {
+  id           String     @id @default(uuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User       @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  body         String
+  createdAt    DateTime   @default(now())
+
+  @@index([submissionId, createdAt])
+}
+
+model SubmissionEmail {
+  id                String     @id @default(uuid())
+  submissionId      String
+  submission        Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  recipient         String
+  subject           String
+  body              String
+  sentAt            DateTime   @default(now())
+  providerMessageId String?
+
+  @@index([submissionId, sentAt])
+}
+
 model Blog {
-  id                     String  @id @default(uuid())
+  id                     String            @id @default(uuid())
+  submissionId           String?           @unique
+  submission             Submission?       @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  contributorId          String?
+  contributor            Contributor?      @relation(fields: [contributorId], references: [id], onDelete: SetNull)
   title                  String
-  slug                   String  @unique
+  slug                   String            @unique
   excerpt                String?
   content                String
   coverImage             String?
@@ -86,76 +265,207 @@ model Blog {
   coverImageAltText      String?
   coverImageCrop         Json?
   coverImageUploadedById String?
+  status                 BlogStatus        @default(DRAFT)
+  createdById            String?
+  createdBy              User?             @relation("BlogCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  authorId               String
+  author                 User              @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  assignedEditorId       String?
+  assignedEditor         User?             @relation("AssignedBlogEditor", fields: [assignedEditorId], references: [id], onDelete: SetNull)
+  categoryId             String?
+  category               Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tags                   BlogTag[]
+  wordCount              Int?
+  readingTime            Int?
+  seoTitle               String?
+  seoDescription         String?
+  scheduledAt            DateTime?
+  publishedAt            DateTime?
+  versions               BlogVersion[]
+  reviews                BlogReview[]
+  comments               Comment[]
+  savedBy                SavedBlog[]
+  reports                BlogReport[]
+  sources                SourceReference[]
+  thumbnail              Thumbnail?
+  editorialReviews       EditorialReview[]
+  readingHistory         ReadingHistory[]
+  reactions              BlogReaction[]
+  lastAutosavedAt        DateTime?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
 
-  status BlogStatus @default(DRAFT)
-
-  authorId String
-  author   User   @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Restrict)
-
-  assignedEditorId String?
-  assignedEditor   User?   @relation("AssignedEditor", fields: [assignedEditorId], references: [id], onDelete: SetNull)
-
-  categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-
-  tags BlogTag[]
-
-  wordCount      Int?
-  readingTime    Int?
-  seoTitle       String?
-  seoDescription String?
-
-  publishedAt DateTime?
-
-  reviews  BlogReview[]
-  versions BlogVersion[]
-  comments Comment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([slug])
-  @@index([status])
-  @@index([authorId])
-  @@index([assignedEditorId])
-  @@index([categoryId])
-  @@index([publishedAt])
-  @@index([createdAt])
   @@index([status, publishedAt])
-  @@index([status, createdAt])
-  @@index([status, updatedAt])
+  @@index([status, scheduledAt])
+  @@index([createdById, updatedAt])
+  @@index([contributorId, createdAt])
   @@index([authorId, createdAt])
-  @@index([authorId, updatedAt])
   @@index([assignedEditorId, status, updatedAt])
   @@index([categoryId, status, publishedAt])
 }
 
-model Category {
-  id          String  @id @default(uuid())
-  name        String  @unique
-  slug        String  @unique
-  description String?
-  isActive    Boolean @default(true)
-  blogs       Blog[]
+model BlogReview {
+  id              String         @id @default(uuid())
+  blogId          String
+  blog            Blog           @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  editorId        String
+  editor          User           @relation(fields: [editorId], references: [id], onDelete: Restrict)
+  decision        ReviewDecision
+  comment         String?
+  plagiarismScore Int?
+  plagiarismNote  String?
+  checklist       Json?
+  createdAt       DateTime       @default(now())
 
+  @@index([blogId, createdAt])
+  @@index([editorId, decision])
+}
+
+model BlogVersion {
+  id             String     @id @default(uuid())
+  blogId         String
+  blog           Blog       @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  title          String
+  excerpt        String?
+  content        String
+  seoTitle       String?
+  seoDescription String?
+  versionNumber  Int
+  editedById     String
+  editedBy       User       @relation(fields: [editedById], references: [id], onDelete: Restrict)
+  changeNote     String?
+  status         BlogStatus
+  wordCount      Int?
+  readingTime    Int?
+  createdAt      DateTime   @default(now())
+
+  @@unique([blogId, versionNumber])
+  @@index([editedById, createdAt])
+}
+
+model SavedBlog {
+  userId    String
+  blogId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blog      Blog     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, blogId])
+  @@index([blogId])
+}
+
+model ReadingHistory {
+  userId     String
+  blogId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blog       Blog     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  lastReadAt DateTime @default(now()) @updatedAt
+
+  @@id([userId, blogId])
+  @@index([userId, lastReadAt])
+  @@index([blogId])
+}
+
+model BlogReaction {
+  userId    String
+  blogId    String
+  type      ReactionType
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blog      Blog         @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@id([userId, blogId, type])
+  @@index([blogId, type])
+  @@index([userId, createdAt])
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([slug])
+  @@index([isActive, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model SourceReference {
+  id                 String                   @id @default(uuid())
+  blogId             String
+  blog               Blog                     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  title              String
+  url                String
+  publisher          String?
+  accessedAt         DateTime?
+  note               String?
+  verificationStatus SourceVerificationStatus @default(NOT_REVIEWED)
+  verifiedById       String?
+  verifiedBy         User?                    @relation("SourceVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt         DateTime?
+  updatedAt          DateTime                 @updatedAt
+  createdAt          DateTime                 @default(now())
+
+  @@index([blogId, createdAt])
+  @@index([verifiedById, verifiedAt])
+}
+
+model Thumbnail {
+  id           String   @id @default(uuid())
+  blogId       String   @unique
+  blog         Blog     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  url          String
+  publicId     String   @unique
+  altText      String
+  caption      String?
+  crop         Json?
+  width        Int
+  height       Int
+  size         Int
+  mimeType     String
+  uploadedById String
+  uploadedBy   User     @relation("ThumbnailUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([uploadedById, createdAt])
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  blogs       Blog[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   @@index([isActive])
 }
 
 model Tag {
-  id       String    @id @default(uuid())
-  name     String    @unique
-  slug     String    @unique
-  isActive Boolean   @default(true)
-  blogs    BlogTag[]
+  id        String    @id @default(uuid())
+  name      String    @unique
+  slug      String    @unique
+  isActive  Boolean   @default(true)
+  blogs     BlogTag[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([slug])
   @@index([isActive])
 }
 
@@ -169,87 +479,50 @@ model BlogTag {
   @@index([tagId])
 }
 
-model BlogReview {
-  id String @id @default(uuid())
-
-  blogId String
-  blog   Blog   @relation(fields: [blogId], references: [id], onDelete: Cascade)
-
-  editorId String
-  editor   User   @relation(fields: [editorId], references: [id], onDelete: Restrict)
-
-  decision        ReviewDecision
-  comment         String?
-  plagiarismScore Int?
-  plagiarismNote  String?
-  checklist       Json?
-
-  createdAt DateTime @default(now())
-
-  @@index([blogId])
-  @@index([editorId])
-  @@index([decision])
-  @@index([blogId, createdAt])
-  @@index([editorId, decision])
-}
-
-model BlogVersion {
-  id String @id @default(uuid())
-
-  blogId String
-  blog   Blog   @relation(fields: [blogId], references: [id], onDelete: Cascade)
-
-  title         String
-  content       String
-  versionNumber Int
-
-  editedById String
-  editedBy   User   @relation(fields: [editedById], references: [id], onDelete: Restrict)
-
-  createdAt DateTime @default(now())
-
-  @@index([blogId])
-  @@index([editedById])
-  @@index([blogId, versionNumber])
-}
-
 model Comment {
-  id       String        @id @default(uuid())
-  blogId   String
-  blog     Blog          @relation(fields: [blogId], references: [id], onDelete: Cascade)
-  userId   String
-  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parentId String?
-  content  String
-  status   CommentStatus @default(VISIBLE)
+  id        String        @id @default(uuid())
+  blogId    String
+  blog      Blog          @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId  String?
+  content   String
+  status    CommentStatus @default(VISIBLE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([blogId])
-  @@index([userId])
-  @@index([status])
-  @@index([createdAt])
-  @@index([parentId])
   @@index([blogId, status, createdAt])
+  @@index([userId, createdAt])
+  @@index([parentId])
+}
+
+model BlogReport {
+  id        String       @id @default(uuid())
+  blogId    String
+  blog      Blog         @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    String
+  details   String?
+  status    ReportStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([blogId, status, createdAt])
+  @@index([userId, createdAt])
 }
 
 model AuditLog {
-  id String @id @default(uuid())
-
-  actorId String?
-  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
-
+  id         String   @id @default(uuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
   action     String
   entityType String
   entityId   String?
   metadata   Json?
+  createdAt  DateTime @default(now())
 
-  createdAt DateTime @default(now())
-
-  @@index([actorId])
-  @@index([action])
-  @@index([entityType])
-  @@index([createdAt])
   @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
 }

@@ -95,6 +95,20 @@ export class CommentsService {
     return comment;
   }
 
+  async update(id: string, user: RequestUser, dto: CreateCommentDto) {
+    const comment = await this.findOrThrow(id);
+    const isOwner = comment.userId === user.id;
+    const isModerator = user.role === Role.ADMIN || user.role === Role.EDITOR;
+    if (!isOwner && !isModerator) {
+      throw new ForbiddenException('Not authorized');
+    }
+    return this.prisma.comment.update({
+      where: { id },
+      data: { content: dto.content.trim() },
+      select: COMMENT_SELECT,
+    });
+  }
+
   async hide(id: string, user: RequestUser) {
     const comment = await this.findOrThrow(id);
 

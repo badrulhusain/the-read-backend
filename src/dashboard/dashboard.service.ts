@@ -34,16 +34,16 @@ export class DashboardService {
           where: { authorId: user.id, status: BlogStatus.DRAFT },
         }),
         this.prisma.blog.count({
-          where: { authorId: user.id, status: BlogStatus.SUBMITTED },
+          where: { authorId: user.id, status: BlogStatus.EDITING },
         }),
         this.prisma.blog.count({
-          where: { authorId: user.id, status: BlogStatus.UNDER_REVIEW },
+          where: { authorId: user.id, status: BlogStatus.QUALITY_REVIEW },
         }),
         this.prisma.blog.count({
-          where: { authorId: user.id, status: BlogStatus.REVISION_REQUESTED },
+          where: { authorId: user.id, status: BlogStatus.NEEDS_CORRECTION },
         }),
         this.prisma.blog.count({
-          where: { authorId: user.id, status: BlogStatus.APPROVED },
+          where: { authorId: user.id, status: BlogStatus.READY_FOR_ADMIN },
         }),
         this.prisma.blog.count({
           where: { authorId: user.id, status: BlogStatus.PUBLISHED },
@@ -98,10 +98,10 @@ export class DashboardService {
     return {
       stats: {
         drafts: byStatus.DRAFT,
-        submitted: byStatus.SUBMITTED,
-        underReview: byStatus.UNDER_REVIEW,
-        revisionRequested: byStatus.REVISION_REQUESTED,
-        approved: byStatus.APPROVED,
+        submitted: byStatus.EDITING,
+        underReview: byStatus.QUALITY_REVIEW,
+        revisionRequested: byStatus.NEEDS_CORRECTION,
+        approved: byStatus.READY_FOR_ADMIN,
         published: byStatus.PUBLISHED,
         rejected: byStatus.REJECTED,
       },
@@ -119,12 +119,18 @@ export class DashboardService {
         revisionRequestedByMe,
         recentAssigned,
       ] = await Promise.all([
-        this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.EDITING } }),
         this.prisma.blog.count({
-          where: { assignedEditorId: user.id, status: BlogStatus.UNDER_REVIEW },
+          where: {
+            assignedEditorId: user.id,
+            status: BlogStatus.QUALITY_REVIEW,
+          },
         }),
         this.prisma.blogReview.count({
-          where: { editorId: user.id, decision: ReviewDecision.APPROVED },
+          where: {
+            editorId: user.id,
+            decision: ReviewDecision.READY_FOR_ADMIN,
+          },
         }),
         this.prisma.blogReview.count({
           where: { editorId: user.id, decision: ReviewDecision.REJECTED },
@@ -136,7 +142,10 @@ export class DashboardService {
           },
         }),
         this.prisma.blog.findMany({
-          where: { assignedEditorId: user.id, status: BlogStatus.UNDER_REVIEW },
+          where: {
+            assignedEditorId: user.id,
+            status: BlogStatus.QUALITY_REVIEW,
+          },
           select: {
             id: true,
             title: true,
@@ -164,9 +173,12 @@ export class DashboardService {
 
     const [submittedQueue, assignedToMe, reviewGroups, recentAssigned] =
       await Promise.all([
-        this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.EDITING } }),
         this.prisma.blog.count({
-          where: { assignedEditorId: user.id, status: BlogStatus.UNDER_REVIEW },
+          where: {
+            assignedEditorId: user.id,
+            status: BlogStatus.QUALITY_REVIEW,
+          },
         }),
         this.prisma.blogReview.groupBy({
           by: ['decision'],
@@ -174,7 +186,10 @@ export class DashboardService {
           _count: { _all: true },
         }),
         this.prisma.blog.findMany({
-          where: { assignedEditorId: user.id, status: BlogStatus.UNDER_REVIEW },
+          where: {
+            assignedEditorId: user.id,
+            status: BlogStatus.QUALITY_REVIEW,
+          },
           select: {
             id: true,
             title: true,
@@ -200,7 +215,7 @@ export class DashboardService {
       stats: {
         submittedQueue,
         assignedToMe,
-        approvedByMe: reviewsByDecision.APPROVED,
+        approvedByMe: reviewsByDecision.READY_FOR_ADMIN,
         rejectedByMe: reviewsByDecision.REJECTED,
         revisionRequestedByMe: reviewsByDecision.REVISION_REQUESTED,
       },
@@ -225,13 +240,17 @@ export class DashboardService {
         recentActivity,
       ] = await Promise.all([
         this.prisma.user.count(),
-        this.prisma.user.count({ where: { role: Role.AUTHOR } }),
+        Promise.resolve(0),
         this.prisma.user.count({ where: { role: Role.EDITOR } }),
         this.prisma.user.count({ where: { role: Role.ADMIN } }),
         this.prisma.blog.count(),
-        this.prisma.blog.count({ where: { status: BlogStatus.SUBMITTED } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.UNDER_REVIEW } }),
-        this.prisma.blog.count({ where: { status: BlogStatus.APPROVED } }),
+        this.prisma.blog.count({ where: { status: BlogStatus.EDITING } }),
+        this.prisma.blog.count({
+          where: { status: BlogStatus.QUALITY_REVIEW },
+        }),
+        this.prisma.blog.count({
+          where: { status: BlogStatus.READY_FOR_ADMIN },
+        }),
         this.prisma.blog.count({ where: { status: BlogStatus.PUBLISHED } }),
         this.prisma.blog.count({ where: { status: BlogStatus.REJECTED } }),
         this.prisma.blog.findMany({
@@ -345,12 +364,12 @@ export class DashboardService {
       (sum, count) => sum + count,
       0,
     );
-    const authors = usersByRole.AUTHOR;
+    const authors = 0;
     const editors = usersByRole.EDITOR;
     const admins = usersByRole.ADMIN;
-    const submitted = blogsByStatus.SUBMITTED;
-    const underReview = blogsByStatus.UNDER_REVIEW;
-    const approved = blogsByStatus.APPROVED;
+    const submitted = blogsByStatus.EDITING;
+    const underReview = blogsByStatus.QUALITY_REVIEW;
+    const approved = blogsByStatus.READY_FOR_ADMIN;
     const published = blogsByStatus.PUBLISHED;
     const rejected = blogsByStatus.REJECTED;
 

@@ -10,7 +10,7 @@ type RequestUser = { id: string; role: Role };
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
-  @Roles(Role.USER, Role.AUTHOR, Role.EDITOR, Role.ADMIN)
+  @Roles(Role.USER, Role.EDITOR, Role.ADMIN)
   @Get('user')
   getUserDashboard(@CurrentUser() user: RequestUser) {
     return this.dashboardService.getUserDashboard(user);

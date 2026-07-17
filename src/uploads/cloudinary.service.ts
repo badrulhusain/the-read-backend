@@ -9,13 +9,7 @@ const FOLDER_MAP: Record<UploadType, string> = {
 };
 
 const TRANSFORM_MAP: Record<UploadType, object> = {
-  [UploadType.BLOG_COVER]: {
-    width: 1200,
-    height: 630,
-    crop: 'fill',
-    quality: 'auto',
-    fetch_format: 'auto',
-  },
+  [UploadType.BLOG_COVER]: {},
   [UploadType.PROFILE_IMAGE]: {
     width: 400,
     height: 400,
@@ -75,6 +69,14 @@ export class CloudinaryService {
       };
     } catch {
       throw new InternalServerErrorException('Image upload failed');
+    }
+  }
+
+  async delete(publicId: string): Promise<void> {
+    try {
+      await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+    } catch {
+      throw new InternalServerErrorException('Image deletion failed');
     }
   }
 }

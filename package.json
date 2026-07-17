@@ -17,7 +17,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e": "NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json",
     "seed": "npx tsx prisma/seed.ts"
   },
   "prisma": {
@@ -100,7 +100,7 @@
       "^\\./internal/prismaNamespace\\.js$": "<rootDir>/generated/prisma/internal/prismaNamespace.ts",
       "^\\./class\\.js$": "<rootDir>/generated/prisma/internal/class.ts",
       "^\\.\\./models\\.js$": "<rootDir>/generated/prisma/models.ts",
-      "^\\./models/(User|Blog|Category|Tag|BlogTag|BlogReview|BlogVersion|Comment|AuditLog)\\.js$": "<rootDir>/generated/prisma/models/$1.ts"
+      "^\\./models/(User|Contributor|Submission|SubmissionAttachment|EditorialReview|EditorialNote|SubmissionEmail|Blog|Category|Tag|BlogTag|BlogReview|BlogVersion|SavedBlog|Notification|SourceReference|Comment|BlogReport|AuditLog)\\.js$": "<rootDir>/generated/prisma/models/$1.ts"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

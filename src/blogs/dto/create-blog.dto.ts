@@ -5,10 +5,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { CoverImageDto } from './cover-image.dto';
 
 export class CreateBlogDto {
   @IsString()
@@ -24,11 +21,6 @@ export class CreateBlogDto {
   @IsString()
   @MinLength(10)
   content: string;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => CoverImageDto)
-  coverImage?: CoverImageDto | null;
 
   @IsOptional()
   @IsString()
