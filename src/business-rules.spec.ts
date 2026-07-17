@@ -183,6 +183,38 @@ describe('business rules', () => {
       );
     });
 
+    it('stores blank optional draft foreign keys as null', async () => {
+      let createInput: unknown;
+      const create = jest.fn((input: unknown) => {
+        createInput = input;
+        return Promise.resolve({ id: 'blog-1' });
+      });
+      const findCategory = jest.fn();
+      const transactionClient = {
+        blog: { create },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const transaction = jest.fn(
+        (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+          callback(transactionClient),
+      );
+      const service = createBlogsService({
+        category: { findUnique: findCategory },
+        blog: { findMany: jest.fn().mockResolvedValue([]) },
+        $transaction: transaction,
+      });
+
+      await service.createDraft(
+        { id: 'editor-1', role: Role.EDITOR },
+        { categoryId: '', contributorId: '   ' },
+      );
+
+      expect(findCategory).not.toHaveBeenCalled();
+      expect(createInput).toMatchObject({
+        data: { categoryId: null, contributorId: null },
+      });
+    });
+
     it('allows admins to publish READY_FOR_ADMIN blogs', async () => {
       const update = jest
         .fn()

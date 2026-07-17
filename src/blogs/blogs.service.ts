@@ -93,13 +93,15 @@ export class BlogsService {
 
   async create(user: RequestUser, dto: CreateBlogDto) {
     const { tagIds, categoryId, content, ...rest } = dto;
+    const normalizedCategoryId = this.normalizeOptionalId(categoryId);
 
     const sanitized = sanitizeBlogHtml(content);
     if (!sanitized.trim()) {
       throw new BadRequestException('Blog content is empty after sanitization');
     }
 
-    if (categoryId) await this.assertCategoryExists(categoryId);
+    if (normalizedCategoryId)
+      await this.assertCategoryExists(normalizedCategoryId);
     if (tagIds?.length) await this.assertTagsExist(tagIds);
 
     const base = generateSlug(dto.title);
@@ -121,7 +123,7 @@ export class BlogsService {
         assignedEditorId: user.role === Role.EDITOR ? user.id : null,
         wordCount,
         readingTime,
-        categoryId: categoryId ?? null,
+        categoryId: normalizedCategoryId,
         ...(tagIds?.length
           ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } }
           : {}),
@@ -200,8 +202,10 @@ export class BlogsService {
     }
 
     if (categoryId !== undefined) {
-      if (categoryId) await this.assertCategoryExists(categoryId);
-      data.categoryId = categoryId ?? null;
+      const normalizedCategoryId = this.normalizeOptionalId(categoryId);
+      if (normalizedCategoryId)
+        await this.assertCategoryExists(normalizedCategoryId);
+      data.categoryId = normalizedCategoryId;
     }
 
     if (tagIds !== undefined && tagIds.length) {
@@ -579,7 +583,9 @@ export class BlogsService {
   async createDraft(user: RequestUser, dto: CreateDraftDto) {
     const title = dto.title?.trim() || 'Untitled draft';
     const content = dto.content ? sanitizeBlogHtml(dto.content) : '';
-    if (dto.categoryId) await this.assertCategoryExists(dto.categoryId);
+    const categoryId = this.normalizeOptionalId(dto.categoryId);
+    const contributorId = this.normalizeOptionalId(dto.contributorId);
+    if (categoryId) await this.assertCategoryExists(categoryId);
     if (dto.tagIds?.length) await this.assertTagsExist(dto.tagIds);
 
     const base = generateSlug(title) || 'untitled-draft';
@@ -602,8 +608,8 @@ export class BlogsService {
           excerpt: dto.excerpt,
           seoTitle: dto.seoTitle,
           seoDescription: dto.seoDescription,
-          categoryId: dto.categoryId ?? null,
-          contributorId: dto.contributorId ?? null,
+          categoryId,
+          contributorId,
           authorId: user.id,
           createdById: user.id,
           assignedEditorId: user.role === Role.EDITOR ? user.id : null,
@@ -650,8 +656,9 @@ export class BlogsService {
       Object.assign(data, { content, ...computeReadingStats(content) });
     }
     if (dto.categoryId !== undefined) {
-      if (dto.categoryId) await this.assertCategoryExists(dto.categoryId);
-      data.categoryId = dto.categoryId;
+      const categoryId = this.normalizeOptionalId(dto.categoryId);
+      if (categoryId) await this.assertCategoryExists(categoryId);
+      data.categoryId = categoryId;
     }
     if (dto.tagIds !== undefined) await this.assertTagsExist(dto.tagIds);
 
@@ -1100,6 +1107,10 @@ export class BlogsService {
     const blog = await this.prisma.blog.findUnique({ where: { id } });
     if (!blog) throw new NotFoundException('Blog not found');
     return blog;
+  }
+
+  private normalizeOptionalId(value: string | null | undefined): string | null {
+    return value?.trim() || null;
   }
 
   private toCoverImageData(
