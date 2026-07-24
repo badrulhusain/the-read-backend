@@ -17,6 +17,8 @@ Article content is sanitized HTML. The backend calculates word count and estimat
 Only Cloudinary thumbnail uploads are supported: JPG/JPEG, PNG, or WebP, up to 5 MB and between 600×315 and 6000×6000 pixels. Article document and PDF uploads are not supported.
 
 See [docs/professional-editorial-workflow.md](docs/professional-editorial-workflow.md) for current API contracts and [docs/curated-editorial-platform.md](docs/curated-editorial-platform.md) for migration context.
+See [docs/backend-hardening.md](docs/backend-hardening.md) for concurrency,
+approval, scheduling, upload cleanup, and deployment requirements.
 
 ## Setup
 
@@ -32,6 +34,7 @@ Required environment variables:
 ```text
 DATABASE_URL=
 JWT_SECRET=
+JWT_ACCESS_SECRET=
 FRONTEND_URL=http://localhost:5173
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
@@ -49,4 +52,5 @@ The API uses the `/api` global prefix and defaults to port `4000`.
 npm run build
 npm test -- --runInBand
 npm run test:e2e -- --runInBand
+npm run lint
 ```
