@@ -21,11 +21,13 @@ import {
   SubmissionQueryDto,
 } from './dto/submission.dto';
 import { SubmissionsService } from './submissions.service';
+import { Throttle } from '@nestjs/throttler';
 type Actor = { id: string; role: Role };
 @Controller('submissions')
 export class SubmissionsController {
   constructor(private readonly service: SubmissionsService) {}
   @Public()
+  @Throttle({ default: { ttl: 3600000, limit: 5 } })
   @Post()
   create(@Body() dto: CreateSubmissionDto) {
     return this.service.create(dto);

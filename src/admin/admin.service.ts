@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   BlogStatus,
@@ -22,6 +23,8 @@ import {
 import { paginate } from '../common/utils/pagination.util';
 import { sanitizeBlogHtml } from '../common/utils/sanitize-blog-html';
 import { computeReadingStats } from '../common/utils/reading-time';
+import { assertBlogTransition } from '../common/workflow/blog-state-machine';
+import { MediaCleanupService } from '../uploads/media-cleanup.service';
 
 const USER_SAFE_SELECT = {
   id: true,
@@ -33,6 +36,9 @@ const USER_SAFE_SELECT = {
   deletedAt: true,
   createdAt: true,
   updatedAt: true,
+  revision: true,
+  approvedRevision: true,
+  approvedAt: true,
 } as const;
 
 const BLOG_LIST_SELECT = {
@@ -75,6 +81,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
+    @Optional() private readonly mediaCleanup?: MediaCleanupService,
   ) {}
 
   async getStats() {
@@ -383,45 +390,78 @@ export class AdminService {
     });
     if (!blog) throw new NotFoundException('Blog not found');
     if (blog.status !== BlogStatus.READY_FOR_ADMIN) {
-      throw new BadRequestException(
-        'Only READY_FOR_ADMIN blogs can be approved',
-      );
+      throw new ConflictException('Only READY_FOR_ADMIN blogs can be approved');
     }
     if (!blog.editorialReviews[0]) {
       throw new BadRequestException(
         'A critical editorial evaluation is required',
       );
     }
-    const existing = await this.prisma.auditLog.findFirst({
-      where: { entityType: 'Blog', entityId: blogId, action: 'ADMIN_APPROVED' },
-      select: { id: true },
+    if (blog.editorialReviews[0].blogRevision !== blog.revision) {
+      throw new ConflictException(
+        'The editorial evaluation is for an older article revision',
+      );
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const approved = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: BlogStatus.READY_FOR_ADMIN,
+          revision: blog.revision,
+          NOT: { approvedRevision: blog.revision },
+        },
+        data: {
+          approvedRevision: blog.revision,
+          approvedAt: new Date(),
+          approvedById: actorId,
+        },
+      });
+      if (approved.count !== 1) {
+        throw new ConflictException(
+          'Article was already approved or changed concurrently',
+        );
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'ADMIN_APPROVED',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: {
+            reviewId: blog.editorialReviews[0].id,
+            revision: blog.revision,
+          },
+        },
+      });
+      return { approved: true, blogId, revision: blog.revision };
     });
-    if (existing) throw new ConflictException('Blog is already admin-approved');
-
-    await this.audit.log({
-      actorId,
-      action: 'ADMIN_APPROVED',
-      entityType: 'Blog',
-      entityId: blogId,
-      metadata: { reviewId: blog.editorialReviews[0].id },
-    });
-    return { approved: true, blogId };
   }
 
   async rejectBlog(actorId: string, blogId: string, reason: string) {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
     if (blog.status !== BlogStatus.READY_FOR_ADMIN) {
-      throw new BadRequestException(
-        'Only READY_FOR_ADMIN blogs can be rejected',
-      );
+      throw new ConflictException('Only READY_FOR_ADMIN blogs can be rejected');
     }
+    assertBlogTransition(blog.status, BlogStatus.REJECTED);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.blog.update({
-        where: { id: blogId },
-        data: { status: BlogStatus.REJECTED, scheduledAt: null },
-        select: BLOG_LIST_SELECT,
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: blog.status,
+          revision: blog.revision,
+        },
+        data: {
+          status: BlogStatus.REJECTED,
+          scheduledAt: null,
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
       });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
       await tx.auditLog.create({
         data: {
           actorId,
@@ -431,7 +471,10 @@ export class AdminService {
           metadata: { reason },
         },
       });
-      return updated;
+      return tx.blog.findUniqueOrThrow({
+        where: { id: blogId },
+        select: BLOG_LIST_SELECT,
+      });
     });
   }
 
@@ -439,17 +482,30 @@ export class AdminService {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
     if (blog.status !== BlogStatus.READY_FOR_ADMIN) {
-      throw new BadRequestException(
+      throw new ConflictException(
         'Only READY_FOR_ADMIN blogs can be returned to an editor',
       );
     }
 
+    assertBlogTransition(blog.status, BlogStatus.NEEDS_CORRECTION);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.blog.update({
-        where: { id: blogId },
-        data: { status: BlogStatus.NEEDS_CORRECTION, scheduledAt: null },
-        select: BLOG_LIST_SELECT,
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: blog.status,
+          revision: blog.revision,
+        },
+        data: {
+          status: BlogStatus.NEEDS_CORRECTION,
+          scheduledAt: null,
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
       });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
       await tx.auditLog.create({
         data: {
           actorId,
@@ -459,26 +515,19 @@ export class AdminService {
           metadata: { note },
         },
       });
-      return updated;
+      return tx.blog.findUniqueOrThrow({
+        where: { id: blogId },
+        select: BLOG_LIST_SELECT,
+      });
     });
   }
 
-  async publishBlog(actorId: string, blogId: string) {
+  async publishBlog(actorId: string | undefined, blogId: string) {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
 
-    if (blog.status === BlogStatus.PUBLISHED) {
-      throw new ConflictException('Blog is already published');
-    }
-    if (
-      blog.status !== BlogStatus.READY_FOR_ADMIN &&
-      blog.status !== BlogStatus.SCHEDULED
-    ) {
-      throw new BadRequestException(
-        'Only READY_FOR_ADMIN or SCHEDULED blogs can be published',
-      );
-    }
-    await this.assertAdminApproved(blogId);
+    assertBlogTransition(blog.status, BlogStatus.PUBLISHED);
+    this.assertCurrentApproval(blog);
 
     const sanitized = sanitizeBlogHtml(blog.content);
     if (!sanitized.trim()) {
@@ -487,8 +536,13 @@ export class AdminService {
     const { wordCount, readingTime } = computeReadingStats(sanitized);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.blog.update({
-        where: { id: blogId },
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: blog.status,
+          revision: blog.revision,
+          approvedRevision: blog.revision,
+        },
         data: {
           content: sanitized,
           status: BlogStatus.PUBLISHED,
@@ -497,8 +551,10 @@ export class AdminService {
           wordCount,
           readingTime,
         },
-        select: BLOG_LIST_SELECT,
       });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
       if (blog.submissionId)
         await tx.submission.update({
           where: { id: blog.submissionId },
@@ -513,7 +569,10 @@ export class AdminService {
           metadata: { oldStatus: blog.status, newStatus: BlogStatus.PUBLISHED },
         },
       });
-      return result;
+      return tx.blog.findUniqueOrThrow({
+        where: { id: blogId },
+        select: BLOG_LIST_SELECT,
+      });
     });
 
     return updated;
@@ -522,19 +581,23 @@ export class AdminService {
   async scheduleBlog(actorId: string, blogId: string, publishAt: Date) {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
-    if (blog.status !== BlogStatus.READY_FOR_ADMIN)
-      throw new BadRequestException(
-        'Only READY_FOR_ADMIN blogs can be scheduled',
-      );
+    assertBlogTransition(blog.status, BlogStatus.SCHEDULED);
     if (publishAt <= new Date())
       throw new BadRequestException('Publication time must be in the future');
-    await this.assertAdminApproved(blogId);
+    this.assertCurrentApproval(blog);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.blog.update({
-        where: { id: blogId },
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: BlogStatus.READY_FOR_ADMIN,
+          revision: blog.revision,
+          approvedRevision: blog.revision,
+        },
         data: { status: BlogStatus.SCHEDULED, scheduledAt: publishAt },
-        select: BLOG_LIST_SELECT,
       });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
       await tx.auditLog.create({
         data: {
           actorId,
@@ -548,11 +611,14 @@ export class AdminService {
           },
         },
       });
-      return updated;
+      return tx.blog.findUniqueOrThrow({
+        where: { id: blogId },
+        select: BLOG_LIST_SELECT,
+      });
     });
   }
 
-  async publishDue(actorId: string) {
+  async publishDue(actorId?: string) {
     const due = await this.prisma.blog.findMany({
       where: {
         status: BlogStatus.SCHEDULED,
@@ -562,21 +628,49 @@ export class AdminService {
       orderBy: { scheduledAt: 'asc' },
       take: 100,
     });
-    const published = [];
-    for (const item of due)
-      published.push(await this.publishBlog(actorId, item.id));
-    return { processed: published.length, blogs: published };
+    const results = [];
+    for (const item of due) {
+      try {
+        const blog = await this.publishBlog(actorId, item.id);
+        results.push({ id: item.id, ok: true, blog });
+      } catch (error) {
+        results.push({
+          id: item.id,
+          ok: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+    return {
+      processed: results.length,
+      published: results.filter((item) => item.ok).length,
+      failed: results.filter((item) => !item.ok).length,
+      results,
+    };
   }
 
   async archiveBlog(actorId: string, blogId: string) {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
+    assertBlogTransition(blog.status, BlogStatus.ARCHIVED);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.blog.update({
-        where: { id: blogId },
-        data: { status: BlogStatus.ARCHIVED, scheduledAt: null },
-        select: BLOG_LIST_SELECT,
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: blog.status,
+          revision: blog.revision,
+        },
+        data: {
+          status: BlogStatus.ARCHIVED,
+          scheduledAt: null,
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
       });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
       if (blog.submissionId)
         await tx.submission.update({
           where: { id: blog.submissionId },
@@ -590,7 +684,10 @@ export class AdminService {
           entityId: blogId,
         },
       });
-      return updated;
+      return tx.blog.findUniqueOrThrow({
+        where: { id: blogId },
+        select: BLOG_LIST_SELECT,
+      });
     });
   }
 
@@ -598,46 +695,69 @@ export class AdminService {
     const blog = await this.prisma.blog.findUnique({ where: { id: blogId } });
     if (!blog) throw new NotFoundException('Blog not found');
 
-    if (blog.status !== BlogStatus.PUBLISHED) {
-      throw new BadRequestException('Only PUBLISHED blogs can be unpublished');
-    }
-
-    const updated = await this.prisma.blog.update({
-      where: { id: blogId },
-      data: { status: BlogStatus.UNPUBLISHED },
-      select: BLOG_LIST_SELECT,
+    assertBlogTransition(blog.status, BlogStatus.UNPUBLISHED);
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id: blogId,
+          status: blog.status,
+          revision: blog.revision,
+        },
+        data: {
+          status: BlogStatus.UNPUBLISHED,
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'BLOG_UNPUBLISHED',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: {
+            oldStatus: blog.status,
+            newStatus: BlogStatus.UNPUBLISHED,
+          },
+        },
+      });
+      return tx.blog.findUniqueOrThrow({
+        where: { id: blogId },
+        select: BLOG_LIST_SELECT,
+      });
     });
-
-    await this.audit.log({
-      actorId,
-      action: 'BLOG_UNPUBLISHED',
-      entityType: 'Blog',
-      entityId: blogId,
-      metadata: {
-        oldStatus: blog.status,
-        newStatus: BlogStatus.UNPUBLISHED,
-      },
-    });
-
-    return updated;
   }
 
   async deleteBlog(actorId: string, blogId: string) {
     const blog = await this.prisma.blog.findUnique({
       where: { id: blogId },
-      select: { id: true, title: true },
+      select: {
+        id: true,
+        title: true,
+        thumbnail: { select: { publicId: true } },
+      },
     });
     if (!blog) throw new NotFoundException('Blog not found');
 
-    await this.prisma.blog.delete({ where: { id: blogId } });
-
-    await this.audit.log({
-      actorId,
-      action: 'BLOG_DELETED',
-      entityType: 'Blog',
-      entityId: blogId,
-      metadata: { title: blog.title },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.blog.delete({ where: { id: blogId } });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'BLOG_DELETED',
+          entityType: 'Blog',
+          entityId: blogId,
+          metadata: { title: blog.title },
+        },
+      });
     });
+    if (blog.thumbnail && this.mediaCleanup) {
+      await this.mediaCleanup.deleteOrEnqueue(blog.thumbnail.publicId);
+    }
 
     return { message: 'Blog deleted' };
   }
@@ -776,13 +896,20 @@ export class AdminService {
     return user;
   }
 
-  private async assertAdminApproved(blogId: string) {
-    const approval = await this.prisma.auditLog.findFirst({
-      where: { entityType: 'Blog', entityId: blogId, action: 'ADMIN_APPROVED' },
-      select: { id: true },
-    });
-    if (!approval) {
-      throw new BadRequestException('Admin approval is required first');
+  private assertCurrentApproval(blog: {
+    revision: number;
+    approvedRevision: number | null;
+    approvedAt: Date | null;
+    approvedById: string | null;
+  }): void {
+    if (
+      blog.approvedRevision !== blog.revision ||
+      !blog.approvedAt ||
+      !blog.approvedById
+    ) {
+      throw new ConflictException(
+        'Admin approval for the current article revision is required',
+      );
     }
   }
 }

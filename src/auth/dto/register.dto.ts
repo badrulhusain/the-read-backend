@@ -6,9 +6,11 @@ import {
   MinLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { Trim } from '../../common/decorators/trim.decorator';
 
 export class RegisterDto {
   @IsString()
+  @Trim()
   @IsNotEmpty()
   @MaxLength(100)
   name: string;
@@ -19,7 +21,7 @@ export class RegisterDto {
   email: string;
 
   @IsString()
-  @MinLength(6)
-  @MaxLength(50)
+  @MinLength(12)
+  @MaxLength(72)
   password: string;
 }

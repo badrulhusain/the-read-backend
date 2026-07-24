@@ -24,6 +24,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { PUBLIC_CONTENT_CACHE } from '../common/constants/cache-control';
+import { Throttle } from '@nestjs/throttler';
 import {
   AutosaveDraftDto,
   CreateDraftDto,
@@ -41,6 +42,7 @@ export class BlogsController {
   constructor(private readonly blogsService: BlogsService) {}
 
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   @Get()
   @Header('Cache-Control', PUBLIC_CONTENT_CACHE)
   listPublished(@Query() query: BlogQueryDto) {
@@ -95,6 +97,16 @@ export class BlogsController {
     @Query() query: HistoryQueryDto,
   ) {
     return this.blogsService.getBlogVersions(id, user, query);
+  }
+
+  @Roles(Role.EDITOR, Role.ADMIN)
+  @Get(':id/versions/:versionId')
+  getBlogVersion(
+    @Param('id') id: string,
+    @Param('versionId') versionId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.blogsService.getBlogVersion(id, versionId, user);
   }
 
   @Roles(Role.EDITOR, Role.ADMIN)
@@ -192,10 +204,16 @@ export class BlogsController {
 
   @Roles(Role.EDITOR, Role.ADMIN)
   @Post(':id/thumbnail')
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+        files: 1,
+        fields: 5,
+        parts: 6,
+      },
     }),
   )
   uploadThumbnail(

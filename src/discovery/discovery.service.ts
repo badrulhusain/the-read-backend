@@ -41,7 +41,11 @@ export class DiscoveryService {
           name: true,
           slug: true,
           description: true,
-          _count: { select: { blogs: true } },
+          _count: {
+            select: {
+              blogs: { where: { status: BlogStatus.PUBLISHED } },
+            },
+          },
         },
         orderBy: { name: 'asc' },
         skip: (page - 1) * limit,
@@ -87,7 +91,11 @@ export class DiscoveryService {
           bio: true,
           organization: true,
           websiteUrl: true,
-          _count: { select: { blogs: true } },
+          _count: {
+            select: {
+              blogs: { where: { status: BlogStatus.PUBLISHED } },
+            },
+          },
         },
         orderBy: { name: 'asc' },
         skip: (page - 1) * limit,

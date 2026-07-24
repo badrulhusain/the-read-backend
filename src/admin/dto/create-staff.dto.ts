@@ -1,8 +1,10 @@
 import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { Trim } from '../../common/decorators/trim.decorator';
 
 export class CreateStaffDto {
   @IsString()
+  @Trim()
   @MaxLength(100)
   name: string;
 
@@ -11,7 +13,7 @@ export class CreateStaffDto {
   email: string;
 
   @IsString()
-  @MinLength(6)
-  @MaxLength(50)
+  @MinLength(12)
+  @MaxLength(72)
   password: string;
 }

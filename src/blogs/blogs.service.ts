@@ -1,11 +1,14 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   BlogStatus,
+  Prisma,
   Role,
   SourceVerificationStatus,
 } from '../generated/prisma/client';
@@ -23,6 +26,7 @@ import { computeReadingStats } from '../common/utils/reading-time';
 import { UploadsService } from '../uploads/uploads.service';
 import { CloudinaryService } from '../uploads/cloudinary.service';
 import { UploadType } from '../uploads/dto/upload-image.dto';
+import { MediaCleanupService } from '../uploads/media-cleanup.service';
 import {
   AutosaveDraftDto,
   CreateDraftDto,
@@ -32,6 +36,10 @@ import {
   UploadThumbnailDto,
   VerifySourceDto,
 } from './dto/workflow.dto';
+import {
+  assertBlogTransition,
+  EDITOR_EDITABLE_STATUSES,
+} from '../common/workflow/blog-state-machine';
 
 const TAG_SELECT = { id: true, name: true, slug: true } as const;
 const CATEGORY_SELECT = { id: true, name: true, slug: true } as const;
@@ -42,22 +50,35 @@ const BLOG_LIST_SELECT = {
   slug: true,
   excerpt: true,
   coverImage: true,
-  coverImagePublicId: true,
   coverImageAltText: true,
   coverImageCrop: true,
-  coverImageUploadedById: true,
-  thumbnail: true,
+  thumbnail: {
+    select: {
+      url: true,
+      altText: true,
+      caption: true,
+      crop: true,
+      width: true,
+      height: true,
+    },
+  },
   status: true,
   publishedAt: true,
   readingTime: true,
   wordCount: true,
+  reactionCount: true,
+  trendingScore: true,
   createdAt: true,
   updatedAt: true,
+  revision: true,
+  approvedRevision: true,
   author: { select: { id: true, name: true, avatarUrl: true } },
   contributor: { select: { id: true, name: true, bio: true } },
   category: { select: CATEGORY_SELECT },
   tags: { select: { tag: { select: TAG_SELECT } } },
-  _count: { select: { comments: true } },
+  _count: {
+    select: { comments: { where: { status: 'VISIBLE' as const } } },
+  },
 } as const;
 
 const BLOG_DETAIL_SELECT = {
@@ -65,7 +86,6 @@ const BLOG_DETAIL_SELECT = {
   content: true,
   seoTitle: true,
   seoDescription: true,
-  assignedEditorId: true,
 } as const;
 
 const USER_SAFE_SELECT = {
@@ -89,6 +109,7 @@ export class BlogsService {
     private readonly audit: AuditLogService,
     private readonly uploads: UploadsService,
     private readonly cloudinary: CloudinaryService,
+    @Optional() private readonly mediaCleanup?: MediaCleanupService,
   ) {}
 
   async create(user: RequestUser, dto: CreateBlogDto) {
@@ -104,58 +125,52 @@ export class BlogsService {
       await this.assertCategoryExists(normalizedCategoryId);
     if (tagIds?.length) await this.assertTagsExist(tagIds);
 
-    const base = generateSlug(dto.title);
-    const existing = await this.prisma.blog.findMany({
-      where: { slug: { startsWith: base } },
-      select: { slug: true },
-    });
-    const slug = makeUniqueSlug(base, new Set(existing.map((b) => b.slug)));
-
     const { wordCount, readingTime } = computeReadingStats(sanitized);
-
-    const blog = await this.prisma.blog.create({
-      data: {
-        ...rest,
-        content: sanitized,
-        slug,
-        authorId: user.id,
-        createdById: user.id,
-        assignedEditorId: user.role === Role.EDITOR ? user.id : null,
-        wordCount,
-        readingTime,
-        categoryId: normalizedCategoryId,
-        ...(tagIds?.length
-          ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } }
-          : {}),
-      },
-      select: BLOG_DETAIL_SELECT,
-    });
-
-    await this.audit.log({
-      actorId: user.id,
-      action: 'BLOG_CREATED',
-      entityType: 'Blog',
-      entityId: blog.id,
-    });
-
-    return blog;
+    return this.withUniqueBlogSlug(dto.title, (slug) =>
+      this.prisma.$transaction(async (tx) => {
+        const blog = await tx.blog.create({
+          data: {
+            ...rest,
+            content: sanitized,
+            slug,
+            authorId: user.id,
+            createdById: user.id,
+            assignedEditorId: user.role === Role.EDITOR ? user.id : null,
+            wordCount,
+            readingTime,
+            categoryId: normalizedCategoryId,
+            ...(tagIds?.length
+              ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } }
+              : {}),
+          },
+          select: BLOG_DETAIL_SELECT,
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId: user.id,
+            action: 'BLOG_CREATED',
+            entityType: 'Blog',
+            entityId: blog.id,
+          },
+        });
+        return blog;
+      }),
+    );
   }
 
   async update(id: string, user: RequestUser, dto: UpdateBlogDto) {
     const blog = await this.findBlogOrThrow(id);
 
     if (user.role === Role.ADMIN) {
-      // Admin can edit any blog
+      if (!EDITOR_EDITABLE_STATUSES.includes(blog.status)) {
+        throw new ConflictException(
+          'Admins must use an explicit workflow operation for this article state',
+        );
+      }
     } else if (user.role === Role.EDITOR) {
-      const editableStatuses: BlogStatus[] = [
-        BlogStatus.DRAFT,
-        BlogStatus.EDITING,
-        BlogStatus.QUALITY_REVIEW,
-        BlogStatus.NEEDS_CORRECTION,
-      ];
       const canEditAssigned =
         blog.assignedEditorId === user.id &&
-        editableStatuses.includes(blog.status);
+        EDITOR_EDITABLE_STATUSES.includes(blog.status);
       if (!canEditAssigned) {
         throw new ForbiddenException(
           'You can only edit an assigned article in an editorial status',
@@ -166,13 +181,13 @@ export class BlogsService {
         throw new ForbiddenException('You can only edit your own blogs');
       }
       if (!EDITABLE_STATUSES.includes(blog.status)) {
-        throw new BadRequestException(
+        throw new ConflictException(
           'Blog can only be edited in DRAFT or REVISION_REQUESTED status',
         );
       }
     }
 
-    const { tagIds, categoryId, content, title, ...rest } = dto;
+    const { tagIds, categoryId, content, title, revision, ...rest } = dto;
 
     const data: Record<string, unknown> = { ...rest };
 
@@ -213,10 +228,6 @@ export class BlogsService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const latest = await tx.blogVersion.aggregate({
-        where: { blogId: id },
-        _max: { versionNumber: true },
-      });
       await tx.blogVersion.create({
         data: {
           blogId: id,
@@ -229,10 +240,25 @@ export class BlogsService {
           wordCount: blog.wordCount,
           readingTime: blog.readingTime,
           editedById: user.id,
-          versionNumber: (latest._max.versionNumber ?? 0) + 1,
+          versionNumber: blog.revision,
           changeNote: 'Major article update',
         },
       });
+      const claimed = await tx.blog.updateMany({
+        where: { id, revision, status: blog.status },
+        data: {
+          ...(data as Prisma.BlogUpdateManyMutationInput),
+          revision: { increment: 1 },
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException(
+          'Article changed since it was loaded; refresh and retry',
+        );
+      }
       if (tagIds !== undefined) {
         await tx.blogTag.deleteMany({ where: { blogId: id } });
         if (tagIds.length) {
@@ -241,9 +267,8 @@ export class BlogsService {
           });
         }
       }
-      const result = await tx.blog.update({
+      const result = await tx.blog.findUniqueOrThrow({
         where: { id },
-        data,
         select: BLOG_DETAIL_SELECT,
       });
       await tx.auditLog.create({
@@ -263,7 +288,7 @@ export class BlogsService {
   async submit(id: string, user: RequestUser) {
     const blog = await this.assertEditorialAccess(id, user);
     if (!EDITABLE_STATUSES.includes(blog.status)) {
-      throw new BadRequestException(
+      throw new ConflictException(
         'Only DRAFT or NEEDS_CORRECTION articles can enter quality review',
       );
     }
@@ -273,27 +298,36 @@ export class BlogsService {
       );
     }
 
-    const updated = await this.prisma.blog.update({
-      where: { id },
-      data: {
-        status: BlogStatus.QUALITY_REVIEW,
-        assignedEditorId: blog.assignedEditorId ?? user.id,
-      },
-      select: BLOG_DETAIL_SELECT,
+    assertBlogTransition(blog.status, BlogStatus.QUALITY_REVIEW);
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.blog.updateMany({
+        where: { id, status: blog.status, revision: blog.revision },
+        data: {
+          status: BlogStatus.QUALITY_REVIEW,
+          assignedEditorId: blog.assignedEditorId ?? user.id,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: 'BLOG_SENT_TO_QUALITY_REVIEW',
+          entityType: 'Blog',
+          entityId: id,
+          metadata: {
+            oldStatus: blog.status,
+            newStatus: BlogStatus.QUALITY_REVIEW,
+            revision: blog.revision,
+          },
+        },
+      });
+      return tx.blog.findUniqueOrThrow({
+        where: { id },
+        select: BLOG_DETAIL_SELECT,
+      });
     });
-
-    await this.audit.log({
-      actorId: user.id,
-      action: 'BLOG_SENT_TO_QUALITY_REVIEW',
-      entityType: 'Blog',
-      entityId: id,
-      metadata: {
-        oldStatus: blog.status,
-        newStatus: BlogStatus.QUALITY_REVIEW,
-      },
-    });
-
-    return updated;
   }
 
   async listPublished(query: BlogQueryDto) {
@@ -340,7 +374,7 @@ export class BlogsService {
       this.prisma.blog.findMany({
         where,
         select: BLOG_LIST_SELECT,
-        orderBy: [{ reactions: { _count: 'desc' } }, { publishedAt: 'desc' }],
+        orderBy: [{ trendingScore: 'desc' }, { publishedAt: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -386,7 +420,11 @@ export class BlogsService {
   async getPublishedById(id: string) {
     const blog = await this.prisma.blog.findFirst({
       where: { id, status: BlogStatus.PUBLISHED },
-      select: BLOG_DETAIL_SELECT,
+      select: {
+        ...BLOG_DETAIL_SELECT,
+        approvedRevision: false,
+        revision: false,
+      },
     });
     if (!blog) throw new NotFoundException('Blog not found');
     return blog;
@@ -511,11 +549,14 @@ export class BlogsService {
     if (user.role !== Role.ADMIN)
       throw new ForbiddenException('Only admins can publish articles');
     const blog = await this.findBlogOrThrow(id);
-    const allowedStatuses: BlogStatus[] = [BlogStatus.READY_FOR_ADMIN];
-
-    if (!allowedStatuses.includes(blog.status)) {
-      throw new BadRequestException(
-        'Only READY_FOR_ADMIN blogs can be published',
+    assertBlogTransition(blog.status, BlogStatus.PUBLISHED);
+    if (
+      blog.approvedRevision !== blog.revision ||
+      !blog.approvedAt ||
+      !blog.approvedById
+    ) {
+      throw new ConflictException(
+        'Admin approval for the current article revision is required',
       );
     }
 
@@ -525,30 +566,43 @@ export class BlogsService {
     }
     const { wordCount, readingTime } = computeReadingStats(sanitized);
 
-    const updated = await this.prisma.blog.update({
-      where: { id },
-      data: {
-        content: sanitized,
-        status: BlogStatus.PUBLISHED,
-        publishedAt: new Date(),
-        wordCount,
-        readingTime,
-      },
-      select: BLOG_DETAIL_SELECT,
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.blog.updateMany({
+        where: {
+          id,
+          status: blog.status,
+          revision: blog.revision,
+          approvedRevision: blog.revision,
+        },
+        data: {
+          content: sanitized,
+          status: BlogStatus.PUBLISHED,
+          publishedAt: new Date(),
+          wordCount,
+          readingTime,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: 'BLOG_PUBLISHED',
+          entityType: 'Blog',
+          entityId: id,
+          metadata: {
+            oldStatus: blog.status,
+            newStatus: BlogStatus.PUBLISHED,
+            revision: blog.revision,
+          },
+        },
+      });
+      return tx.blog.findUniqueOrThrow({
+        where: { id },
+        select: BLOG_DETAIL_SELECT,
+      });
     });
-
-    await this.audit.log({
-      actorId: user.id,
-      action: 'BLOG_PUBLISHED',
-      entityType: 'Blog',
-      entityId: id,
-      metadata: {
-        oldStatus: blog.status,
-        newStatus: BlogStatus.PUBLISHED,
-      },
-    });
-
-    return updated;
   }
 
   async unpublish(id: string, user: RequestUser) {
@@ -556,28 +610,37 @@ export class BlogsService {
       throw new ForbiddenException('Only admins can unpublish articles');
     const blog = await this.findBlogOrThrow(id);
 
-    if (blog.status !== BlogStatus.PUBLISHED) {
-      throw new BadRequestException('Only PUBLISHED blogs can be unpublished');
-    }
-
-    const updated = await this.prisma.blog.update({
-      where: { id },
-      data: { status: BlogStatus.UNPUBLISHED },
-      select: BLOG_DETAIL_SELECT,
+    assertBlogTransition(blog.status, BlogStatus.UNPUBLISHED);
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.blog.updateMany({
+        where: { id, status: blog.status, revision: blog.revision },
+        data: {
+          status: BlogStatus.UNPUBLISHED,
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('Article state changed concurrently');
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: 'BLOG_UNPUBLISHED',
+          entityType: 'Blog',
+          entityId: id,
+          metadata: {
+            oldStatus: blog.status,
+            newStatus: BlogStatus.UNPUBLISHED,
+          },
+        },
+      });
+      return tx.blog.findUniqueOrThrow({
+        where: { id },
+        select: BLOG_DETAIL_SELECT,
+      });
     });
-
-    await this.audit.log({
-      actorId: user.id,
-      action: 'BLOG_UNPUBLISHED',
-      entityType: 'Blog',
-      entityId: id,
-      metadata: {
-        oldStatus: blog.status,
-        newStatus: BlogStatus.UNPUBLISHED,
-      },
-    });
-
-    return updated;
   }
 
   async createDraft(user: RequestUser, dto: CreateDraftDto) {
@@ -588,49 +651,42 @@ export class BlogsService {
     if (categoryId) await this.assertCategoryExists(categoryId);
     if (dto.tagIds?.length) await this.assertTagsExist(dto.tagIds);
 
-    const base = generateSlug(title) || 'untitled-draft';
-    const existing = await this.prisma.blog.findMany({
-      where: { slug: { startsWith: base } },
-      select: { slug: true },
-    });
-    const slug = makeUniqueSlug(
-      base,
-      new Set(existing.map((item) => item.slug)),
-    );
     const stats = computeReadingStats(content);
 
-    return this.prisma.$transaction(async (tx) => {
-      const blog = await tx.blog.create({
-        data: {
-          title,
-          slug,
-          content,
-          excerpt: dto.excerpt,
-          seoTitle: dto.seoTitle,
-          seoDescription: dto.seoDescription,
-          categoryId,
-          contributorId,
-          authorId: user.id,
-          createdById: user.id,
-          assignedEditorId: user.role === Role.EDITOR ? user.id : null,
-          status: BlogStatus.DRAFT,
-          ...stats,
-          ...(dto.tagIds?.length
-            ? { tags: { create: dto.tagIds.map((tagId) => ({ tagId })) } }
-            : {}),
-        },
-        select: BLOG_DETAIL_SELECT,
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId: user.id,
-          action: 'BLOG_DRAFT_CREATED',
-          entityType: 'Blog',
-          entityId: blog.id,
-        },
-      });
-      return blog;
-    });
+    return this.withUniqueBlogSlug(title, (slug) =>
+      this.prisma.$transaction(async (tx) => {
+        const blog = await tx.blog.create({
+          data: {
+            title,
+            slug,
+            content,
+            excerpt: dto.excerpt,
+            seoTitle: dto.seoTitle,
+            seoDescription: dto.seoDescription,
+            categoryId,
+            contributorId,
+            authorId: user.id,
+            createdById: user.id,
+            assignedEditorId: user.role === Role.EDITOR ? user.id : null,
+            status: BlogStatus.DRAFT,
+            ...stats,
+            ...(dto.tagIds?.length
+              ? { tags: { create: dto.tagIds.map((tagId) => ({ tagId })) } }
+              : {}),
+          },
+          select: BLOG_DETAIL_SELECT,
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId: user.id,
+            action: 'BLOG_DRAFT_CREATED',
+            entityType: 'Blog',
+            entityId: blog.id,
+          },
+        });
+        return blog;
+      }),
+    );
   }
 
   async autosave(id: string, user: RequestUser, dto: AutosaveDraftDto) {
@@ -642,7 +698,7 @@ export class BlogsService {
         BlogStatus.NEEDS_CORRECTION,
       ]).includes(blog.status)
     ) {
-      throw new BadRequestException('This article is not autosave-editable');
+      throw new ConflictException('This article is not autosave-editable');
     }
 
     const data: Record<string, unknown> = { lastAutosavedAt: new Date() };
@@ -663,6 +719,21 @@ export class BlogsService {
     if (dto.tagIds !== undefined) await this.assertTagsExist(dto.tagIds);
 
     return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.blog.updateMany({
+        where: { id, revision: dto.revision, status: blog.status },
+        data: {
+          ...(data as Prisma.BlogUpdateManyMutationInput),
+          revision: { increment: 1 },
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException(
+          'Autosave conflict: article changed in another tab',
+        );
+      }
       if (dto.tagIds !== undefined) {
         await tx.blogTag.deleteMany({ where: { blogId: id } });
         if (dto.tagIds.length) {
@@ -671,9 +742,8 @@ export class BlogsService {
           });
         }
       }
-      return tx.blog.update({
+      return tx.blog.findUniqueOrThrow({
         where: { id },
-        data,
         select: BLOG_DETAIL_SELECT,
       });
     });
@@ -681,6 +751,7 @@ export class BlogsService {
 
   async updateRichText(id: string, user: RequestUser, dto: UpdateRichTextDto) {
     const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
     const content = sanitizeBlogHtml(dto.content);
     if (!content.trim()) {
       throw new BadRequestException(
@@ -690,10 +761,6 @@ export class BlogsService {
     const stats = computeReadingStats(content);
 
     return this.prisma.$transaction(async (tx) => {
-      const latest = await tx.blogVersion.aggregate({
-        where: { blogId: id },
-        _max: { versionNumber: true },
-      });
       await tx.blogVersion.create({
         data: {
           blogId: id,
@@ -706,15 +773,30 @@ export class BlogsService {
           wordCount: blog.wordCount,
           readingTime: blog.readingTime,
           editedById: user.id,
-          versionNumber: (latest._max.versionNumber ?? 0) + 1,
+          versionNumber: blog.revision,
           changeNote: dto.changeNote ?? 'Rich-text content update',
         },
       });
-      const updated = await tx.blog.update({
-        where: { id },
-        data: { content, ...stats, status: BlogStatus.EDITING },
-        select: BLOG_DETAIL_SELECT,
+      const claimed = await tx.blog.updateMany({
+        where: { id, revision: dto.revision, status: blog.status },
+        data: {
+          content,
+          ...stats,
+          status:
+            blog.status === BlogStatus.DRAFT
+              ? BlogStatus.DRAFT
+              : BlogStatus.EDITING,
+          revision: { increment: 1 },
+          approvedRevision: null,
+          approvedAt: null,
+          approvedById: null,
+        },
       });
+      if (claimed.count !== 1) {
+        throw new ConflictException(
+          'Article changed since it was loaded; refresh and retry',
+        );
+      }
       await tx.auditLog.create({
         data: {
           actorId: user.id,
@@ -724,7 +806,10 @@ export class BlogsService {
           metadata: { changeNote: dto.changeNote ?? null },
         },
       });
-      return updated;
+      return tx.blog.findUniqueOrThrow({
+        where: { id },
+        select: BLOG_DETAIL_SELECT,
+      });
     });
   }
 
@@ -744,7 +829,8 @@ export class BlogsService {
     user: RequestUser,
     dto: UpdateCoverImageDto,
   ) {
-    await this.assertEditorialAccess(id, user);
+    const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
 
     const updated = await this.prisma.blog.update({
       where: { id },
@@ -768,7 +854,8 @@ export class BlogsService {
     file: Express.Multer.File,
     dto: UploadThumbnailDto,
   ) {
-    await this.assertEditorialAccess(id, user);
+    const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
     const uploaded = await this.uploads.uploadImage(
       user,
       file,
@@ -780,18 +867,19 @@ export class BlogsService {
       uploaded.width > 6000 ||
       uploaded.height > 6000
     ) {
-      await this.cloudinary.delete(uploaded.publicId);
+      await this.cleanupAsset(uploaded.publicId);
       throw new BadRequestException(
         'Thumbnail dimensions must be between 600x315 and 6000x6000 pixels',
       );
     }
 
-    const previous = await this.prisma.thumbnail.findUnique({
-      where: { blogId: id },
-      select: { publicId: true },
-    });
     try {
-      const thumbnail = await this.prisma.$transaction(async (tx) => {
+      const replacement = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Blog" WHERE "id" = ${id} FOR UPDATE`;
+        const previous = await tx.thumbnail.findUnique({
+          where: { blogId: id },
+          select: { publicId: true },
+        });
         const result = await tx.thumbnail.upsert({
           where: { blogId: id },
           create: {
@@ -827,14 +915,17 @@ export class BlogsService {
             entityId: id,
           },
         });
-        return result;
+        return { result, previousPublicId: previous?.publicId };
       });
-      if (previous?.publicId && previous.publicId !== uploaded.publicId) {
-        await this.cloudinary.delete(previous.publicId);
+      if (
+        replacement.previousPublicId &&
+        replacement.previousPublicId !== uploaded.publicId
+      ) {
+        await this.cleanupAsset(replacement.previousPublicId);
       }
-      return thumbnail;
+      return replacement.result;
     } catch (error) {
-      await this.cloudinary.delete(uploaded.publicId);
+      await this.cleanupAsset(uploaded.publicId);
       throw error;
     }
   }
@@ -844,7 +935,8 @@ export class BlogsService {
     user: RequestUser,
     dto: UpdateThumbnailMetadataDto,
   ) {
-    await this.assertEditorialAccess(id, user);
+    const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
     const thumbnail = await this.prisma.thumbnail.findUnique({
       where: { blogId: id },
     });
@@ -871,12 +963,15 @@ export class BlogsService {
   }
 
   async deleteThumbnail(id: string, user: RequestUser) {
-    await this.assertEditorialAccess(id, user);
-    const thumbnail = await this.prisma.thumbnail.findUnique({
-      where: { blogId: id },
-    });
-    if (!thumbnail) throw new NotFoundException('Thumbnail not found');
-    await this.prisma.$transaction(async (tx) => {
+    const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
+    const publicId = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Blog" WHERE "id" = ${id} FOR UPDATE`;
+      const thumbnail = await tx.thumbnail.findUnique({
+        where: { blogId: id },
+        select: { publicId: true },
+      });
+      if (!thumbnail) throw new NotFoundException('Thumbnail not found');
       await tx.thumbnail.delete({ where: { blogId: id } });
       await tx.auditLog.create({
         data: {
@@ -886,13 +981,15 @@ export class BlogsService {
           entityId: id,
         },
       });
+      return thumbnail.publicId;
     });
-    await this.cloudinary.delete(thumbnail.publicId);
+    await this.cleanupAsset(publicId);
     return { deleted: true };
   }
 
   async addSource(id: string, user: RequestUser, dto: CreateSourceDto) {
-    await this.assertEditorialAccess(id, user);
+    const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
     return this.prisma.$transaction(async (tx) => {
       const source = await tx.sourceReference.create({
         data: { blogId: id, ...dto },
@@ -925,7 +1022,8 @@ export class BlogsService {
     user: RequestUser,
     dto: VerifySourceDto,
   ) {
-    await this.assertEditorialAccess(id, user);
+    const blog = await this.assertEditorialAccess(id, user);
+    this.assertArticleEditable(blog.status);
     const source = await this.prisma.sourceReference.findFirst({
       where: { id: sourceId, blogId: id },
     });
@@ -1018,7 +1116,6 @@ export class BlogsService {
           versionNumber: true,
           title: true,
           excerpt: true,
-          content: true,
           seoTitle: true,
           seoDescription: true,
           status: true,
@@ -1036,6 +1133,30 @@ export class BlogsService {
     ]);
 
     return paginate(data, total, page, limit);
+  }
+
+  async getBlogVersion(id: string, versionId: string, user: RequestUser) {
+    await this.assertBlogAccess(id, user);
+    const version = await this.prisma.blogVersion.findFirst({
+      where: { id: versionId, blogId: id },
+      select: {
+        id: true,
+        versionNumber: true,
+        title: true,
+        excerpt: true,
+        content: true,
+        seoTitle: true,
+        seoDescription: true,
+        status: true,
+        wordCount: true,
+        readingTime: true,
+        changeNote: true,
+        createdAt: true,
+        editedBy: { select: USER_SAFE_SELECT },
+      },
+    });
+    if (!version) throw new NotFoundException('Blog version not found');
+    return version;
   }
 
   // ── Phase 3: Blog Timeline ────────────────────────────────────────────────
@@ -1087,6 +1208,24 @@ export class BlogsService {
     throw new ForbiddenException(
       'You do not have editorial access to this article',
     );
+  }
+
+  private assertArticleEditable(status: BlogStatus): void {
+    if (!EDITOR_EDITABLE_STATUSES.includes(status)) {
+      throw new ConflictException('This article state is not editable');
+    }
+  }
+
+  private async cleanupAsset(publicId: string): Promise<void> {
+    if (this.mediaCleanup) {
+      await this.mediaCleanup.deleteOrEnqueue(publicId);
+      return;
+    }
+    try {
+      await this.cloudinary.delete(publicId);
+    } catch {
+      // Compatibility fallback for isolated unit tests without the queue.
+    }
   }
 
   private async assertBlogAccess(id: string, user: RequestUser) {
@@ -1164,5 +1303,37 @@ export class BlogsService {
     if (tags.length !== tagIds.length) {
       throw new BadRequestException('One or more tag IDs are invalid');
     }
+  }
+
+  private async withUniqueBlogSlug<T>(
+    title: string,
+    operation: (slug: string) => Promise<T>,
+  ): Promise<T> {
+    const base = generateSlug(title);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const slug = attempt === 0 ? base : `${base}-${attempt + 1}`;
+      try {
+        return await operation(slug);
+      } catch (error) {
+        const target =
+          error instanceof Prisma.PrismaClientKnownRequestError
+            ? error.meta?.target
+            : undefined;
+        const slugConflict =
+          (typeof target === 'string' && target.includes('slug')) ||
+          (Array.isArray(target) && target.includes('slug'));
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002' &&
+          slugConflict
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new ConflictException(
+      'Could not allocate a unique slug after bounded retries',
+    );
   }
 }
