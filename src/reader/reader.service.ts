@@ -62,12 +62,7 @@ export class ReaderService {
       }),
       this.prisma.savedBlog.count({ where }),
     ]);
-    return paginate(
-      data.map((row) => row.blog),
-      total,
-      page,
-      limit,
-    );
+    return paginate(data, total, page, limit);
   }
   async recordHistory(userId: string, blogId: string) {
     await this.published(blogId);
