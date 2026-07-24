@@ -1,4 +1,8 @@
-import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ValidationPipe,
+} from '@nestjs/common';
 import { validate } from 'class-validator';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth/auth.service';
@@ -68,8 +72,13 @@ describe('business rules', () => {
       expect(errors.some((error) => error.property === 'password')).toBe(true);
     });
 
-    it('accepts 6-character passwords without composition rules', async () => {
+    it('rejects legacy 6-character passwords', async () => {
       const errors = await validatePassword('abcdef');
+      expect(errors.some((error) => error.property === 'password')).toBe(true);
+    });
+
+    it('accepts passwords of at least 12 characters', async () => {
+      const errors = await validatePassword('correct-horse');
       expect(errors).toHaveLength(0);
     });
   });
@@ -216,23 +225,35 @@ describe('business rules', () => {
     });
 
     it('allows admins to publish READY_FOR_ADMIN blogs', async () => {
-      const update = jest
-        .fn()
-        .mockResolvedValue({ status: BlogStatus.PUBLISHED });
+      const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        blog: {
+          updateMany,
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ status: BlogStatus.PUBLISHED }),
+        },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      };
       const service = createBlogsService({
         blog: {
           findUnique: jest.fn().mockResolvedValue({
             id: 'blog-1',
             status: BlogStatus.READY_FOR_ADMIN,
+            revision: 1,
+            approvedRevision: 1,
+            approvedAt: new Date(),
+            approvedById: 'admin-1',
             content: '<h3>Ready to publish</h3>',
           }),
-          update,
         },
+        $transaction: (callback: (client: typeof tx) => unknown) =>
+          callback(tx),
       });
 
       await service.publish('blog-1', { id: 'admin-1', role: Role.ADMIN });
 
-      expect(update).toHaveBeenCalledWith(
+      expect(updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ status: BlogStatus.PUBLISHED }),
         }),
@@ -240,17 +261,26 @@ describe('business rules', () => {
     });
 
     it('unpublishes published blogs', async () => {
-      const update = jest
-        .fn()
-        .mockResolvedValue({ status: BlogStatus.UNPUBLISHED });
+      const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        blog: {
+          updateMany,
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ status: BlogStatus.UNPUBLISHED }),
+        },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      };
       const service = createBlogsService({
         blog: {
           findUnique: jest.fn().mockResolvedValue({
             id: 'blog-1',
             status: BlogStatus.PUBLISHED,
+            revision: 1,
           }),
-          update,
         },
+        $transaction: (callback: (client: typeof tx) => unknown) =>
+          callback(tx),
       });
 
       await service.unpublish('blog-1', {
@@ -258,9 +288,9 @@ describe('business rules', () => {
         role: Role.ADMIN,
       });
 
-      expect(update).toHaveBeenCalledWith(
+      expect(updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { status: BlogStatus.UNPUBLISHED },
+          data: expect.objectContaining({ status: BlogStatus.UNPUBLISHED }),
         }),
       );
     });
@@ -279,7 +309,7 @@ describe('business rules', () => {
 
       await expect(
         service.publish('blog-1', { id: 'admin-1', role: Role.ADMIN }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 
