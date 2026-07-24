@@ -44,9 +44,6 @@ equals `revision`; audit history is never used as current approval state.
 Version list responses no longer include `content`. Fetch one version's full
 content with `GET /api/blogs/:id/versions/:versionId`.
 
-New registrations and staff accounts require passwords between 12 and 72
-characters. Existing password hashes remain valid for login.
-
 ## Scheduled publication and media cleanup
 
 The application runs the due-publication worker every minute. Claims use the

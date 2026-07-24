@@ -72,13 +72,8 @@ describe('business rules', () => {
       expect(errors.some((error) => error.property === 'password')).toBe(true);
     });
 
-    it('rejects legacy 6-character passwords', async () => {
+    it('accepts 6-character passwords without composition rules', async () => {
       const errors = await validatePassword('abcdef');
-      expect(errors.some((error) => error.property === 'password')).toBe(true);
-    });
-
-    it('accepts passwords of at least 12 characters', async () => {
-      const errors = await validatePassword('correct-horse');
       expect(errors).toHaveLength(0);
     });
   });
