@@ -138,6 +138,7 @@ model User {
   verifiedSources     SourceReference[] @relation("SourceVerifier")
   readingHistory      ReadingHistory[]
   blogReactions       BlogReaction[]
+  approvedBlogs       Blog[]            @relation("BlogApprover")
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
@@ -193,6 +194,7 @@ model EditorialReview {
   submissionId             String?
   submission               Submission?               @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   blogId                   String?
+  blogRevision             Int?
   blog                     Blog?                     @relation(fields: [blogId], references: [id], onDelete: Cascade)
   editorId                 String
   editor                   User                      @relation(fields: [editorId], references: [id], onDelete: Restrict)
@@ -220,6 +222,7 @@ model EditorialReview {
   createdAt                DateTime                  @default(now())
 
   @@index([blogId, createdAt])
+  @@index([blogId, blogRevision, createdAt])
   @@index([submissionId, createdAt])
   @@index([editorId, createdAt])
   @@index([decision, createdAt])
@@ -291,7 +294,14 @@ model Blog {
   editorialReviews       EditorialReview[]
   readingHistory         ReadingHistory[]
   reactions              BlogReaction[]
+  reactionCount          Int               @default(0)
+  trendingScore          Float             @default(0)
   lastAutosavedAt        DateTime?
+  revision               Int               @default(1)
+  approvedRevision       Int?
+  approvedAt             DateTime?
+  approvedById           String?
+  approvedBy             User?             @relation("BlogApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
 
@@ -302,6 +312,8 @@ model Blog {
   @@index([authorId, createdAt])
   @@index([assignedEditorId, status, updatedAt])
   @@index([categoryId, status, publishedAt])
+  @@index([status, approvedRevision, scheduledAt])
+  @@index([status, trendingScore, publishedAt])
 }
 
 model BlogReview {
@@ -525,4 +537,17 @@ model AuditLog {
   @@index([entityType, entityId, createdAt])
   @@index([actorId, createdAt])
   @@index([action, createdAt])
+}
+
+model MediaCleanupJob {
+  id          String   @id @default(uuid())
+  publicId    String   @unique
+  attempts    Int      @default(0)
+  lastError   String?
+  availableAt DateTime @default(now())
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([completedAt, availableAt])
 }

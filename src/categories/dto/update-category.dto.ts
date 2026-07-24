@@ -5,16 +5,19 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { Trim } from '../../common/decorators/trim.decorator';
 
 export class UpdateCategoryDto {
   @IsOptional()
   @IsString()
+  @Trim()
   @MinLength(2)
   @MaxLength(100)
   name?: string;
 
   @IsOptional()
   @IsString()
+  @Trim()
   @MaxLength(500)
   description?: string;
 

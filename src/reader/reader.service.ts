@@ -32,13 +32,28 @@ export class ReaderService {
   async listSaved(userId: string, page = 1, limit = 20) {
     limit = Math.min(Math.max(limit, 1), 100);
     page = Math.max(page, 1);
-    const where = { userId };
+    const where = { userId, blog: { status: BlogStatus.PUBLISHED } };
     const [data, total] = await Promise.all([
       this.prisma.savedBlog.findMany({
         where,
-        include: {
+        select: {
+          createdAt: true,
           blog: {
-            include: { category: true, tags: { include: { tag: true } } },
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              excerpt: true,
+              coverImage: true,
+              publishedAt: true,
+              readingTime: true,
+              category: { select: { id: true, name: true, slug: true } },
+              tags: {
+                select: {
+                  tag: { select: { id: true, name: true, slug: true } },
+                },
+              },
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -85,10 +100,23 @@ export class ReaderService {
   }
   async react(userId: string, blogId: string, type: ReactionType) {
     await this.published(blogId);
-    await this.prisma.blogReaction.upsert({
-      where: { userId_blogId_type: { userId, blogId, type } },
-      update: {},
-      create: { userId, blogId, type },
+    await this.prisma.$transaction(async (tx) => {
+      const inserted = await tx.blogReaction.createMany({
+        data: [{ userId, blogId, type }],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 1) {
+        const updated = await tx.blog.updateMany({
+          where: { id: blogId, status: BlogStatus.PUBLISHED },
+          data: {
+            reactionCount: { increment: 1 },
+            trendingScore: { increment: 1 },
+          },
+        });
+        if (updated.count !== 1) {
+          throw new NotFoundException('Published blog not found');
+        }
+      }
     });
     return this.reactionCounts(blogId);
   }

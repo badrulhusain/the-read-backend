@@ -1,10 +1,13 @@
 export function generateSlug(title: string): string {
-  return title
+  const slug = title
+    .normalize('NFKC')
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+
+  return slug || 'article';
 }
 
 export function makeUniqueSlug(base: string, existing: Set<string>): string {

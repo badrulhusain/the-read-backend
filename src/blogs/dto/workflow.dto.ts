@@ -1,8 +1,8 @@
 import { Type } from 'class-transformer';
 import {
   IsNotEmpty,
+  IsInt,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   IsUrl,
@@ -28,9 +28,19 @@ export class CreateDraftDto extends PartialType(CreateBlogDto) {
   contributorId?: string;
 }
 
-export class AutosaveDraftDto extends CreateDraftDto {}
+export class AutosaveDraftDto extends CreateDraftDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  revision!: number;
+}
 
 export class UpdateRichTextDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  revision!: number;
+
   @IsString()
   @IsNotEmpty()
   content!: string;

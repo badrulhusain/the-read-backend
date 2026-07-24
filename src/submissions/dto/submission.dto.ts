@@ -1,6 +1,5 @@
 import { Transform, Type } from 'class-transformer';
 import {
-  IsArray,
   IsEmail,
   IsEnum,
   IsInt,
@@ -21,9 +20,10 @@ import {
   ReviewDecision,
   SubmissionStatus,
 } from '../../generated/prisma/client';
+import { Trim } from '../../common/decorators/trim.decorator';
 
 export class ContributorDto {
-  @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
+  @IsString() @Trim() @IsNotEmpty() @MaxLength(120) name!: string;
   @IsEmail() @MaxLength(254) email!: string;
   @IsOptional() @IsString() @MaxLength(30) phone?: string;
   @IsOptional() @IsString() @MaxLength(2000) bio?: string;
@@ -32,7 +32,7 @@ export class ContributorDto {
 }
 
 export class CreateSubmissionDto {
-  @Transform(({ value }) => {
+  @Transform(({ value }: { value: unknown }) => {
     if (typeof value !== 'string') return value;
     try {
       return JSON.parse(value) as unknown;
@@ -43,9 +43,9 @@ export class CreateSubmissionDto {
   @ValidateNested()
   @Type(() => ContributorDto)
   contributor!: ContributorDto;
-  @IsString() @IsNotEmpty() @MaxLength(240) title!: string;
-  @IsOptional() @IsString() @MaxLength(5000) pitch?: string;
-  @IsString() @IsNotEmpty() content!: string;
+  @IsString() @Trim() @IsNotEmpty() @MaxLength(240) title!: string;
+  @IsOptional() @IsString() @Trim() @MaxLength(5000) pitch?: string;
+  @IsString() @Trim() @IsNotEmpty() @MaxLength(500000) content!: string;
 }
 
 export class SubmissionQueryDto {

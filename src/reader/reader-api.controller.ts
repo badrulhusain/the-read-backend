@@ -5,6 +5,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { NewsletterSubscriptionDto, ReactionDto } from './dto/reader.dto';
 import { ReaderService } from './reader.service';
+import { Throttle } from '@nestjs/throttler';
 
 type User = { id: string };
 
@@ -29,6 +30,7 @@ export class ReaderApiController {
   }
 
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('newsletter/subscribe')
   subscribe(@Body() dto: NewsletterSubscriptionDto) {
     return this.service.subscribe(dto.email);

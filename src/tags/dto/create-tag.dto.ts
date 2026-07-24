@@ -5,9 +5,11 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { Trim } from '../../common/decorators/trim.decorator';
 
 export class CreateTagDto {
   @IsString()
+  @Trim()
   @MinLength(2)
   @MaxLength(60)
   name: string;

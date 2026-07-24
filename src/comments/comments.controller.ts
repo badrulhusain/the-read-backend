@@ -17,6 +17,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { PUBLIC_COMMENTS_CACHE } from '../common/constants/cache-control';
+import { Throttle } from '@nestjs/throttler';
 
 type RequestUser = { id: string; role: Role; status?: UserStatus };
 
@@ -34,6 +35,7 @@ export class CommentsController {
 
   // Protected: post a comment on a published blog
   @Post('blogs/:slug/comments')
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   create(
     @Param('slug') slug: string,
     @CurrentUser() user: RequestUser,

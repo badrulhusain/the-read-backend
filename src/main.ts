@@ -7,7 +7,9 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { createCorsOriginChecker } from './common/utils/cors-origin';
+import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -43,7 +45,12 @@ async function bootstrap() {
   });
 
   const reflector = app.get(Reflector);
-  app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
+  app.useGlobalGuards(
+    app.get(ThrottlerGuard),
+    new JwtAuthGuard(reflector),
+    new RolesGuard(reflector),
+  );
+  app.useGlobalInterceptors(new RequestLoggingInterceptor());
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -55,6 +62,7 @@ async function bootstrap() {
   );
 
   app.useGlobalFilters(new GlobalExceptionFilter());
+  app.enableShutdownHooks();
 
   const port = process.env.PORT ?? 4000;
   await app.listen(port);
